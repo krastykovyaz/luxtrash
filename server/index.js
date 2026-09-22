@@ -227,6 +227,17 @@ app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
   res.json({ ok: true });
 });
 
+// RFC 8058 one-click unsubscribe target for the List-Unsubscribe-Post
+// header below — mail clients' own "Unsubscribe" button POSTs here directly,
+// no page load or confirmation click required. Same effect as the DELETE
+// route above, just reachable the way a mail client actually calls it.
+app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
+  const row = db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
+    .get(req.params.token, req.params.token.toLowerCase());
+  if (row) db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
+  res.status(200).send("OK");
+});
+
 // --- Static frontend ---
 app.use(express.static(path.join(__dirname, "..", "public")));
 

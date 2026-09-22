@@ -5,6 +5,30 @@ const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
 let transporter = null;
 let warnedMissingConfig = false;
 
+const PUBLIC_URL = process.env.PUBLIC_URL || "https://binduty.sococoffee.com";
+
+// A friendly display name (not a bare address) and a real List-Unsubscribe
+// header are the two concrete things that actually move the needle on spam
+// placement for a low-volume sender — everything else (account age, prior
+// sending history) is reputation that only builds up over time and use.
+function fromHeader() {
+  const addr = process.env.SMTP_FROM || process.env.SMTP_USER;
+  return `"Bin Duty" <${addr}>`;
+}
+
+// RFC 8058 one-click unsubscribe headers. Mail clients that support it show
+// their own "Unsubscribe" button next to the sender and POST straight to
+// the URL — no page load, no confirmation click. Only meaningful on
+// recurring subscription mail, not a one-off action email like a camera
+// check result.
+function unsubscribeHeaders(email) {
+  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}`;
+  return {
+    "List-Unsubscribe": `<mailto:${process.env.SMTP_USER}?subject=unsubscribe>, <${url}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+  };
+}
+
 function getTransporter() {
   if (transporter) return transporter;
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
@@ -73,11 +97,12 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl) {
     <p style="margin:18px 0 0;font-size:12px;color:${COLORS.inkFaint};word-break:break-all;">${escapeHtml(confirmUrl)}</p>
   `);
   await transport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: fromHeader(),
     to: email,
     subject: t(lang, "confirmSubject"),
     text: `${bodyText}\n\n${confirmUrl}`,
-    html
+    html,
+    headers: unsubscribeHeaders(email)
   });
 }
 
@@ -103,11 +128,12 @@ async function sendDailyReminders(db, roster) {
     try {
       const msg = buildTomorrowMessage(account.language, roster, tomorrow);
       await transport.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        from: fromHeader(),
         to: account.email,
         subject: msg.subject,
         text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${msg.text}`,
-        html: msg.html
+        html: msg.html,
+        headers: unsubscribeHeaders(account.email)
       });
       sent++;
     } catch (err) {
@@ -148,11 +174,12 @@ async function sendWeekAheadNotices(db, roster) {
     try {
       const msg = buildWeekAheadMessage(account.language, roster, nextMonday);
       await transport.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        from: fromHeader(),
         to: account.email,
         subject: msg.subject,
         text: msg.text,
-        html: msg.html
+        html: msg.html,
+        headers: unsubscribeHeaders(account.email)
       });
       sent++;
     } catch (err) {
@@ -180,7 +207,7 @@ async function sendCheckResult(email, lang, data) {
     </p>
   `);
   await transport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: fromHeader(),
     to: email,
     subject: `${t(lang, "scanHeading")} — ${title}`,
     text: `${data.item || ""}\n\n${title} (${data.code})\n${data.why || ""}`,
