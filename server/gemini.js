@@ -44,8 +44,12 @@ async function checkPhoto(buffer, mimeType) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    const err = new Error(`Gemini request failed (${res.status}): ${text.slice(0, 300)}`);
+    // Keep the raw upstream body out of the thrown message — it's only for
+    // the server log (detail), never forwarded to the client, which should
+    // see a fixed, safe message instead.
+    const err = new Error("Gemini couldn't process that photo.");
     err.code = "GEMINI_ERROR";
+    err.detail = `HTTP ${res.status}: ${text.slice(0, 300)}`;
     throw err;
   }
 

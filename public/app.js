@@ -1,12 +1,10 @@
 (function () {
   "use strict";
 
-  var SCHEDULE = {
-    "2026-09": {3:"VB",4:"P",7:"M",8:"E",10:"VB",11:"P",14:"M",17:"VB",18:"P",21:"M",22:"E",24:"VB",25:"P",28:"M"},
-    "2026-10": {1:"VB",2:"P",5:"M",6:"E",8:"VB",9:"P",12:"M",15:"VB",16:"P",19:"M",20:"E",22:"VB",23:"P",26:"M",29:"VB",30:"P"},
-    "2026-11": {1:"HOLIDAY",2:"M",3:"E",5:"VB",6:"P",9:"M",12:"VB",13:"P",16:"M",17:"E",19:"VB",20:"P",23:"M",26:"VB",27:"P",30:"M"},
-    "2026-12": {1:"E",3:"VB",4:"P",7:"M",10:"VB",11:"P",14:"M",15:"E",17:"VB",18:"P",21:"M",24:"VB",25:"HOLIDAY",28:"M",31:"VB"}
-  };
+  // Fetched from /api/schedule at boot — the server (rotation.js) is the
+  // single source of truth; this used to be a second hand-copied version
+  // here that could silently drift from the one the API actually uses.
+  var SCHEDULE = {};
 
   var BIN_COLOR = { M: "var(--bin-m)", E: "var(--bin-e)", P: "var(--bin-p)", V: "var(--bin-v)", B: "var(--bin-b)", R: "var(--bin-r)" };
   var GAME_CODES = ["M", "E", "P", "V", "B", "R"];
@@ -150,6 +148,13 @@
     renderBadges(document.getElementById("tomorrowBadges"), codesFor(tomorrow));
     document.getElementById("todayDate").textContent = fmtLong(today);
     document.getElementById("tomorrowDate").textContent = fmtLong(tomorrow);
+    var outOfRangeEl = document.getElementById("outOfRangeNote");
+    if (Object.keys(SCHEDULE).length && !SCHEDULE[monthKey(today)]) {
+      outOfRangeEl.textContent = tr("outOfRange");
+      outOfRangeEl.hidden = false;
+    } else {
+      outOfRangeEl.hidden = true;
+    }
     renderWeekStrip();
     renderDuty();
     renderGuide();
@@ -218,7 +223,11 @@
     avatar.style.background = AVATAR_COLORS[thisWeek.idx % AVATAR_COLORS.length];
     avatar.textContent = initials(thisWeek.name);
     document.getElementById("dutyName").textContent = thisWeek.name;
-    document.getElementById("dutyNext").innerHTML = fmt("nextWeekLabel", {}) + " <b>" + nextWeek.name + "</b>";
+    var dutyNextEl = document.getElementById("dutyNext");
+    dutyNextEl.textContent = fmt("nextWeekLabel", {}) + " ";
+    var dutyNextName = document.createElement("b");
+    dutyNextName.textContent = nextWeek.name;
+    dutyNextEl.appendChild(dutyNextName);
 
     var rosterStrip = document.getElementById("rosterStrip");
     rosterStrip.innerHTML = "";
@@ -363,7 +372,7 @@
     document.getElementById("gEyebrow").textContent = tr("whereGoes");
     gNextBtn.textContent = tr("next");
     gNameEl.textContent = gQueue[gIndex].name;
-    gProgressEl.textContent = "Item " + (gIndex + 1) + " / " + gQueue.length;
+    gProgressEl.textContent = fmt("itemProgress", { n: gIndex + 1, total: gQueue.length });
   }
 
   function gameAnswer(code, btn) {
@@ -775,8 +784,7 @@
       })
       .then(function () {
         notifyEmailInput.value = "";
-        notifyStatus.textContent = tr("notifyDone");
-        loadSubscribers();
+        notifyStatus.textContent = tr("notifyPending");
       })
       .catch(function (e) { notifyStatus.textContent = e.message || tr("notifyFailed"); })
       .finally(function () { notifySubscribeBtn.disabled = false; });
@@ -813,16 +821,92 @@
       b.addEventListener("click", function () { resultEl.hidden = true; input.value = ""; });
     }
 
+    // data.item / data.why come from Gemini's read of a user-supplied photo —
+    // treated as untrusted input (the JSON schema constrains structure, not
+    // string contents, and a photo can carry a prompt-injection payload).
+    // Every piece of it goes through textContent, never innerHTML.
     function renderResult(thumbUrl, data) {
       var g = guideFor(data.code);
       resultEl.hidden = false;
-      resultEl.innerHTML =
-        '<img class="scan-thumb" src="' + thumbUrl + '" alt="">' +
-        '<div class="scan-body">' +
-        '<div class="guide-head"><span class="guide-letter" style="background:' + BIN_COLOR[data.code] + '">' + data.code + '</span><span class="guide-title">' + (g ? g.title : data.code) + '</span></div>' +
-        '<div class="guide-body">' + (data.item ? '<strong>' + data.item + '.</strong> ' : '') + data.why + '</div>' +
-        '<button class="scan-again" type="button" id="scanAgainBtn">' + tr("scanTryAnother") + '</button>' +
-        '</div>';
+      resultEl.innerHTML = "";
+
+      var thumb = document.createElement("img");
+      thumb.className = "scan-thumb";
+      thumb.src = thumbUrl;
+      thumb.alt = "";
+      resultEl.appendChild(thumb);
+
+      var bodyDiv = document.createElement("div");
+      bodyDiv.className = "scan-body";
+
+      var head = document.createElement("div");
+      head.className = "guide-head";
+      var letter = document.createElement("span");
+      letter.className = "guide-letter";
+      letter.style.background = BIN_COLOR[data.code];
+      letter.textContent = data.code;
+      var title = document.createElement("span");
+      title.className = "guide-title";
+      title.textContent = g ? g.title : data.code;
+      head.appendChild(letter);
+      head.appendChild(title);
+      bodyDiv.appendChild(head);
+
+      var bodyText = document.createElement("div");
+      bodyText.className = "guide-body";
+      if (data.item) {
+        var itemStrong = document.createElement("strong");
+        itemStrong.textContent = data.item + ".";
+        bodyText.appendChild(itemStrong);
+        bodyText.appendChild(document.createTextNode(" "));
+      }
+      bodyText.appendChild(document.createTextNode(data.why));
+      bodyDiv.appendChild(bodyText);
+
+      var again = document.createElement("button");
+      again.className = "scan-again";
+      again.type = "button";
+      again.id = "scanAgainBtn";
+      again.textContent = tr("scanTryAnother");
+      bodyDiv.appendChild(again);
+
+      var emailRow = document.createElement("div");
+      emailRow.className = "claim-row";
+      emailRow.style.marginTop = "6px";
+      var emailInput = document.createElement("input");
+      emailInput.type = "email";
+      emailInput.className = "claim-select";
+      emailInput.placeholder = tr("scanEmailPlaceholder");
+      var emailBtn = document.createElement("button");
+      emailBtn.type = "button";
+      emailBtn.className = "stamp-btn ghost";
+      emailBtn.textContent = tr("scanEmailBtn");
+      var emailStatus = document.createElement("div");
+      emailStatus.className = "claim-status";
+      emailBtn.addEventListener("click", function () {
+        var addr = emailInput.value.trim();
+        if (!addr) return;
+        emailBtn.disabled = true;
+        emailStatus.textContent = tr("scanEmailSending");
+        fetch("/api/check/email", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
+        })
+          .then(function (r) {
+            if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+            return r.json();
+          })
+          .then(function () { emailStatus.textContent = tr("scanEmailDone"); })
+          .catch(function () { emailStatus.textContent = tr("scanEmailFailed"); })
+          .finally(function () { emailBtn.disabled = false; });
+      });
+      emailRow.appendChild(emailInput);
+      emailRow.appendChild(emailBtn);
+      bodyDiv.appendChild(emailRow);
+      bodyDiv.appendChild(emailStatus);
+
+      resultEl.appendChild(bodyDiv);
       addAgainHandler();
     }
 
@@ -866,12 +950,19 @@
     });
   })();
 
-  // ---- bootstrap: load the roster, then render everything that depends on it ----
-  fetch("/api/roster")
-    .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-    .then(function (roster) {
-      ROSTER = roster && roster.length ? roster : ["Housemate"];
+  // ---- bootstrap: load the roster + schedule, then render everything that depends on them ----
+  var scheduleLoadFailed = false;
+  Promise.all([
+    fetch("/api/roster").then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
+    fetch("/api/schedule")
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .catch(function () { scheduleLoadFailed = true; return {}; })
+  ])
+    .then(function (results) {
+      ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
+      SCHEDULE = results[1];
       recomputeWeek();
+      if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
       applyLang();
     })
     .catch(function () {

@@ -1,32 +1,50 @@
+// Force the house's timezone before anything else touches Date — the server
+// itself may be provisioned anywhere (this one happened to be UTC+3), but
+// every collection-day and task-window calculation assumes Luxembourg local
+// time, same as the browser.
+process.env.TZ = process.env.TZ || "Europe/Luxembourg";
+
 const path = require("path");
+const crypto = require("crypto");
 // Always load the .env at the repo root, regardless of the process's cwd —
 // relying on dotenv's cwd-relative default silently picks up the wrong file
 // when a process manager (pm2, systemd) starts this from a different directory.
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const express = require("express");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
-const { sendWeeklyReminders, sendCheckResult } = require("./mailer");
+const { sendWeeklyReminders, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
+const { SCHEDULE } = require("./rotation");
 
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UNSAFE_NAME_CHARS = /[<>&"'`\x00-\x1F]/;
 
 function currentRoster() {
-  return db.prepare("SELECT name FROM roster ORDER BY position ASC").all().map(function (r) { return r.name; });
+  // Alphabetical (case-insensitive), not insertion order — so "one
+  // house-mate a week, alphabetically" (what the UI actually says) stays
+  // true no matter when someone was added to or removed from the roster.
+  return db.prepare("SELECT name FROM roster ORDER BY name COLLATE NOCASE ASC").all().map((r) => r.name);
 }
 
 const app = express();
+app.set("trust proxy", 1); // behind nginx — rate limiting needs the real client IP, not nginx's
+app.use(helmet({ contentSecurityPolicy: false })); // CSP needs a real policy pass against this page's inline <style> + Google Fonts; everything else (HSTS, frameguard, no-sniff) applies as-is
 app.use(express.json());
 
-// Real phone camera photos routinely run 8-15MB — the previous 8MB cap
-// rejected those with a raw Multer error that fell through to Express's
-// default HTML error page instead of JSON, which the frontend couldn't
-// parse and just reported as a generic failure.
+// Generous limits for a house of a handful of people, tight enough to stop
+// a script from hammering the Gemini bill or the mail queue.
+const checkLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+const writeLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+const mailLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }
@@ -36,13 +54,13 @@ const upload = multer({
 // multer.memoryStorage() above means the photo only ever exists as an
 // in-memory buffer for this one request — it's never written to disk or a
 // database, and is discarded the moment the response is sent.
-app.post("/api/check", (req, res) => {
+app.post("/api/check", checkLimiter, (req, res) => {
   upload.single("photo")(req, res, async (err) => {
     if (err) {
       if (err.code === "LIMIT_FILE_SIZE") {
         return res.status(413).json({ error: "That photo is too large (20MB max).", code: "TOO_LARGE" });
       }
-      return res.status(400).json({ error: err.message, code: "UPLOAD_ERROR" });
+      return res.status(400).json({ error: "Couldn't read that upload.", code: "UPLOAD_ERROR" });
     }
     if (!req.file) {
       return res.status(400).json({ error: "No photo uploaded." });
@@ -51,11 +69,48 @@ app.post("/api/check", (req, res) => {
       const result = await checkPhoto(req.file.buffer, req.file.mimetype);
       res.json(result);
     } catch (checkErr) {
-      console.error(`/api/check failed — mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes, code: ${checkErr.code}, message: ${checkErr.message}`);
+      console.error(
+        `/api/check failed — mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes, ` +
+        `code: ${checkErr.code}, message: ${checkErr.message}` +
+        (checkErr.detail ? `, detail: ${checkErr.detail}` : "")
+      );
       const status = checkErr.code === "NO_API_KEY" ? 503 : 502;
       res.status(status).json({ error: checkErr.message, code: checkErr.code || "UNKNOWN" });
     }
   });
+});
+
+// Emails a copy of one already-returned check result. Takes the result back
+// from the client rather than re-running Gemini — this is just "send what
+// you already showed me", not a second classification.
+app.post("/api/check/email", mailLimiter, async (req, res) => {
+  const body = req.body || {};
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const lang = VALID_LANGS.has(body.lang) ? body.lang : "en";
+  const item = typeof body.item === "string" ? body.item.slice(0, 200) : "";
+  const code = body.code;
+  const why = typeof body.why === "string" ? body.why.slice(0, 500) : "";
+
+  if (!EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: "That doesn't look like a valid email address." });
+  }
+  if (!/^[MEPVBR]$/.test(code) || !why) {
+    return res.status(400).json({ error: "Nothing to send yet — check a photo first." });
+  }
+  try {
+    await sendCheckResult(email, lang, { item, code, why });
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err.code === "NO_SMTP" ? 503 : 502;
+    res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
+  }
+});
+
+// --- Collection schedule (kept server-side only, in rotation.js — this
+// just serves it, so the frontend doesn't carry a second hand-copied
+// version that can silently drift from the one the API actually uses) ---
+app.get("/api/schedule", (req, res) => {
+  res.json(SCHEDULE);
 });
 
 // --- Roster (housemates) ---
@@ -63,7 +118,7 @@ app.get("/api/roster", (req, res) => {
   res.json(currentRoster());
 });
 
-app.post("/api/roster", (req, res) => {
+app.post("/api/roster", writeLimiter, (req, res) => {
   const raw = req.body && req.body.name;
   const name = typeof raw === "string" ? raw.trim() : "";
   if (!name) {
@@ -71,6 +126,9 @@ app.post("/api/roster", (req, res) => {
   }
   if (name.length > MAX_NAME_LENGTH) {
     return res.status(400).json({ error: `Name must be ${MAX_NAME_LENGTH} characters or fewer.` });
+  }
+  if (UNSAFE_NAME_CHARS.test(name)) {
+    return res.status(400).json({ error: "Name can't contain <, >, &, quotes, or control characters." });
   }
   const roster = currentRoster();
   if (roster.some((n) => n.toLowerCase() === name.toLowerCase())) {
@@ -81,7 +139,7 @@ app.post("/api/roster", (req, res) => {
   res.status(201).json(currentRoster());
 });
 
-app.delete("/api/roster/:name", (req, res) => {
+app.delete("/api/roster/:name", writeLimiter, (req, res) => {
   const name = req.params.name;
   const roster = currentRoster();
   if (roster.length <= 1) {
@@ -96,7 +154,7 @@ app.get("/api/tasks/current", (req, res) => {
   res.json(getCurrentTask(db, new Date()));
 });
 
-app.post("/api/tasks/:dateKey/out", (req, res) => {
+app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
   const name = req.body && req.body.name;
   try {
     res.json(confirmOut(db, req.params.dateKey, currentRoster(), name));
@@ -105,7 +163,7 @@ app.post("/api/tasks/:dateKey/out", (req, res) => {
   }
 });
 
-app.post("/api/tasks/:dateKey/back", (req, res) => {
+app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
   const name = req.body && req.body.name;
   try {
     res.json(confirmBack(db, req.params.dateKey, currentRoster(), name));
@@ -118,13 +176,15 @@ app.get("/api/tasks/leaderboard", (req, res) => {
   res.json(getLeaderboard(db));
 });
 
-// --- Notification subscriptions ---
+// --- Notification subscriptions (double opt-in) ---
+// Only ever lists/emails CONFIRMED accounts — an unconfirmed row is just a
+// pending request nobody else can see or be notified from.
 app.get("/api/subscribe", (req, res) => {
-  const rows = db.prepare("SELECT name, language FROM accounts ORDER BY created_at ASC").all();
+  const rows = db.prepare("SELECT name, language FROM accounts WHERE confirmed = 1 ORDER BY created_at ASC").all();
   res.json(rows);
 });
 
-app.post("/api/subscribe", (req, res) => {
+app.post("/api/subscribe", mailLimiter, async (req, res) => {
   const body = req.body || {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -136,14 +196,33 @@ app.post("/api/subscribe", (req, res) => {
   if (!EMAIL_RE.test(email)) {
     return res.status(400).json({ error: "That doesn't look like a valid email address." });
   }
+
+  const token = crypto.randomBytes(24).toString("hex");
   db.prepare(
-    "INSERT INTO accounts (email, name, language, created_at) VALUES (?, ?, ?, ?) " +
-    "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language"
-  ).run(email, name, language, new Date().toISOString());
-  res.status(201).json({ name, language });
+    "INSERT INTO accounts (email, name, language, created_at, confirmed, confirm_token) VALUES (?, ?, ?, ?, 0, ?) " +
+    "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language, confirmed = 0, confirm_token = excluded.confirm_token"
+  ).run(email, name, language, new Date().toISOString(), token);
+
+  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}`;
+  try {
+    await sendConfirmationEmail(email, language, name, confirmUrl);
+    res.status(202).json({ pending: true });
+  } catch (err) {
+    const status = err.code === "NO_SMTP" ? 503 : 502;
+    res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
+  }
 });
 
-app.delete("/api/subscribe/:email", (req, res) => {
+app.get("/api/subscribe/confirm/:token", (req, res) => {
+  const row = db.prepare("SELECT email FROM accounts WHERE confirm_token = ?").get(req.params.token);
+  if (!row) {
+    return res.status(404).send("<p>That confirmation link is invalid or already used. Close this tab and subscribe again from Bin Duty.</p>");
+  }
+  db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
+  res.send("<p>Confirmed — you'll get the weekly bin duty reminder by email. You can close this tab.</p>");
+});
+
+app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
   db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
   res.json({ ok: true });
 });
@@ -153,16 +232,27 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Bin Duty server listening on http://localhost:${PORT}`);
+  console.log(`Bin Duty server listening on http://localhost:${PORT} (TZ=${process.env.TZ})`);
   if (!process.env.GEMINI_API_KEY) {
     console.warn("GEMINI_API_KEY is not set — the camera check will return a 503 until it is.");
   }
 });
 
-// Weekly reminder email — Mondays at 7:00 server time by default.
+// Weekly reminder email — Mondays at 7:00 Luxembourg time by default.
+// Validated at startup: an invalid cron expression must not crash the whole
+// server, and a typo in .env must not silently disable the reminder either.
 const NOTIFY_CRON = process.env.NOTIFY_CRON || "0 7 * * 1";
-cron.schedule(NOTIFY_CRON, async () => {
-  const result = await sendWeeklyReminders(db, currentRoster());
-  console.log(`Weekly reminder run: sent ${result.sent}, skipped ${result.skipped}` +
-    (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+if (!cron.validate(NOTIFY_CRON)) {
+  console.error(`NOTIFY_CRON "${NOTIFY_CRON}" is not a valid cron expression — falling back to "0 7 * * 1".`);
+}
+cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : "0 7 * * 1", async () => {
+  try {
+    const result = await sendWeeklyReminders(db, currentRoster());
+    console.log(`Weekly reminder run: sent ${result.sent}, skipped ${result.skipped}` +
+      (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+  } catch (err) {
+    // An error here must never take the whole process down with it — it's
+    // a background job, not a request handler.
+    console.error("Weekly reminder run threw:", err.message);
+  }
 });

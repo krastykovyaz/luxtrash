@@ -44,11 +44,29 @@ function buildWeeklyMessage(lang, roster, today) {
   return { person, text: lines.join("\n") };
 }
 
-// Sends this week's reminder to every subscribed account, each in their own
+// Sends a "click to confirm" email for double opt-in — an open, unverified
+// /api/subscribe would otherwise let anyone sign up anyone else's address,
+// which is exactly the pattern that gets an SMTP account flagged as spam.
+async function sendConfirmationEmail(email, lang, name, confirmUrl) {
+  const transport = getTransporter();
+  if (!transport) {
+    const err = new Error("Email isn't configured on the server.");
+    err.code = "NO_SMTP";
+    throw err;
+  }
+  await transport.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: email,
+    subject: t(lang, "confirmSubject"),
+    text: `${t(lang, "confirmBody").replace("{name}", name)}\n\n${confirmUrl}`
+  });
+}
+
+// Sends this week's reminder to every CONFIRMED account, each in their own
 // preferred language. Returns { sent, skipped, errors } for logging/inspection.
 async function sendWeeklyReminders(db, roster) {
   const transport = getTransporter();
-  const accounts = db.prepare("SELECT email, name, language FROM accounts").all();
+  const accounts = db.prepare("SELECT email, name, language FROM accounts WHERE confirmed = 1").all();
   if (!transport) return { sent: 0, skipped: accounts.length, errors: [] };
   if (!roster.length) return { sent: 0, skipped: accounts.length, errors: [] };
 
@@ -92,4 +110,4 @@ async function sendCheckResult(email, lang, data) {
   });
 }
 
-module.exports = { sendWeeklyReminders, buildWeeklyMessage, getTransporter, sendCheckResult };
+module.exports = { sendWeeklyReminders, buildWeeklyMessage, getTransporter, sendCheckResult, sendConfirmationEmail };

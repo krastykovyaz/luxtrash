@@ -3,9 +3,11 @@ services:
     build: .
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - PORT=3000
+      - TZ=Europe/Luxembourg
     volumes:
       - ./server/data:/app/server/data
     restart: unless-stopped

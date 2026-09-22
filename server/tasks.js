@@ -17,9 +17,19 @@ function dateKeyOf(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 function parseDateKey(key) {
   const [y, m, day] = key.split("-").map(Number);
   return new Date(y, m - 1, day);
+}
+
+// A dateKey is only trusted once it round-trips: right shape, and it's the
+// canonical form of a real calendar date (rejects "2026-9-22", "2026-13-40",
+// etc. — Date silently rolls invalid month/day values over into a different
+// date instead of erroring, so the round-trip is the actual validation).
+function isValidDateKey(key) {
+  return typeof key === "string" && DATE_KEY_RE.test(key) && dateKeyOf(parseDateKey(key)) === key;
 }
 
 // Every real collection date (codes present, not a holiday) from
@@ -85,10 +95,26 @@ function getCurrentTask(db, today) {
 }
 
 function confirmOut(db, dateKey, roster, name) {
+  if (!isValidDateKey(dateKey)) {
+    const err = new Error("That's not a real collection date.");
+    err.status = 400;
+    throw err;
+  }
   const date = parseDateKey(dateKey);
   const codes = codesFor(date);
   if (!codes || codes === "HOLIDAY") {
     const err = new Error("There's no collection on that date.");
+    err.status = 400;
+    throw err;
+  }
+  // The task's window opens the evening before its date — matches what the
+  // app shows as "current". Without this, anything with a real collection
+  // code (any date through the end of the published schedule) could be
+  // confirmed out and paid out immediately, regardless of when it's due.
+  const today = new Date();
+  const opensAt = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
+  if (today < opensAt) {
+    const err = new Error("That task isn't open yet — it opens the evening before.");
     err.status = 400;
     throw err;
   }
@@ -104,6 +130,11 @@ function confirmOut(db, dateKey, roster, name) {
 }
 
 function confirmBack(db, dateKey, roster, name) {
+  if (!isValidDateKey(dateKey)) {
+    const err = new Error("That's not a real collection date.");
+    err.status = 400;
+    throw err;
+  }
   const row = getTaskRow(db, dateKey);
   if (!row || !row.out_at) {
     const err = new Error("Confirm it's out before confirming it's back.");

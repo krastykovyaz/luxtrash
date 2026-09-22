@@ -32,9 +32,21 @@ db.exec(`
     email TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     language TEXT NOT NULL DEFAULT 'en',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    confirm_token TEXT
   )
 `);
+
+// Idempotent migration for the confirmed/confirm_token columns on a
+// database that already existed before double opt-in was added.
+var accountCols = db.prepare("PRAGMA table_info(accounts)").all().map(function (c) { return c.name; });
+if (accountCols.indexOf("confirmed") === -1) {
+  db.exec("ALTER TABLE accounts ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0");
+}
+if (accountCols.indexOf("confirm_token") === -1) {
+  db.exec("ALTER TABLE accounts ADD COLUMN confirm_token TEXT");
+}
 
 var rosterCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
 if (rosterCount === 0) {
