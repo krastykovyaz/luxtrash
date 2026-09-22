@@ -17,4 +17,21 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS roster (
+    name TEXT PRIMARY KEY,
+    position INTEGER NOT NULL
+  )
+`);
+
+var rosterCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
+if (rosterCount === 0) {
+  var seed = db.prepare("INSERT INTO roster (name, position) VALUES (?, ?)");
+  var seedNames = ["Akemi", "Alex", "Diana", "James", "Wenxuan", "Zheng Lin"];
+  var insertSeed = db.transaction(function () {
+    seedNames.forEach(function (name, i) { seed.run(name, i); });
+  });
+  insertSeed();
+}
+
 module.exports = db;

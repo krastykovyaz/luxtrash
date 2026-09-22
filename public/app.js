@@ -32,8 +32,8 @@
     { name: "Used cat litter", code: "M", why: "Named as excluded from biowaste — household bin instead." }
   ];
 
-  var ROSTER = ["Akemi", "Alex", "Diana", "James", "Wenxuan", "Zheng Lin"];
-  var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F"];
+  var ROSTER = []; // loaded from /api/roster before first render
+  var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F", "#63C7A6", "#C77DBB"];
   var ANCHOR_MONDAY = new Date(2026, 8, 21);
 
   // ---- i18n ----
@@ -104,8 +104,12 @@
 
   var today = new Date();
   var tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  var thisWeek = personForWeek(today);
-  var nextWeek = personForWeek(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7));
+  var thisWeek = { name: "", idx: 0 };
+  var nextWeek = { name: "", idx: 0 };
+  function recomputeWeek() {
+    thisWeek = personForWeek(today);
+    nextWeek = personForWeek(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7));
+  }
 
   // ---- language switcher ----
   function renderLangRow() {
@@ -221,12 +225,72 @@
       av.textContent = initials(name);
       chip.appendChild(av);
       chip.appendChild(document.createTextNode(name));
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "chip-remove";
+      removeBtn.setAttribute("aria-label", "Remove " + name);
+      removeBtn.textContent = "×";
+      removeBtn.addEventListener("click", function () { removeFromRoster(name); });
+      chip.appendChild(removeBtn);
       rosterStrip.appendChild(chip);
     });
 
     var hint = document.getElementById("copyHint");
     hint.textContent = tr("copyHintDefault");
   }
+
+  // ---- roster management (add / remove housemates) ----
+  var rosterMsg = document.getElementById("rosterMsg");
+  var addNameInput = document.getElementById("addNameInput");
+  var addNameBtn = document.getElementById("addNameBtn");
+
+  function afterRosterChange(newRoster) {
+    ROSTER = newRoster;
+    recomputeWeek();
+    renderDuty();
+    renderClaimSelect();
+    loadClaims();
+  }
+
+  function addToRoster() {
+    var name = addNameInput.value.trim();
+    if (!name) return;
+    addNameBtn.disabled = true;
+    fetch("/api/roster", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: name })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function (roster) {
+        addNameInput.value = "";
+        rosterMsg.textContent = "";
+        afterRosterChange(roster);
+      })
+      .catch(function (e) { rosterMsg.textContent = e.message || "Couldn't add that name."; })
+      .finally(function () { addNameBtn.disabled = false; });
+  }
+
+  function removeFromRoster(name) {
+    fetch("/api/roster/" + encodeURIComponent(name), { method: "DELETE" })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function (roster) {
+        rosterMsg.textContent = "";
+        afterRosterChange(roster);
+      })
+      .catch(function (e) { rosterMsg.textContent = e.message || "Couldn't remove that name."; });
+  }
+
+  addNameBtn.addEventListener("click", addToRoster);
+  addNameInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); addToRoster(); }
+  });
 
   function weekLines() {
     var lines = [];
@@ -684,5 +748,18 @@
     });
   })();
 
-  applyLang();
+  // ---- bootstrap: load the roster, then render everything that depends on it ----
+  fetch("/api/roster")
+    .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+    .then(function (roster) {
+      ROSTER = roster && roster.length ? roster : ["Housemate"];
+      recomputeWeek();
+      applyLang();
+    })
+    .catch(function () {
+      ROSTER = ["Housemate"];
+      recomputeWeek();
+      rosterMsg.textContent = "Couldn't load the housemate list from the server.";
+      applyLang();
+    });
 })();

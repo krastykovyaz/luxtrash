@@ -6,8 +6,12 @@ const multer = require("multer");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
 
-const ROSTER = ["Akemi", "Alex", "Diana", "James", "Wenxuan", "Zheng Lin"];
 const COINS_PER_CLAIM = 10;
+const MAX_NAME_LENGTH = 40;
+
+function currentRoster() {
+  return db.prepare("SELECT name FROM roster ORDER BY position ASC").all().map(function (r) { return r.name; });
+}
 
 const app = express();
 app.use(express.json());
@@ -41,6 +45,39 @@ app.post("/api/check", upload.single("photo"), async (req, res) => {
   }
 });
 
+// --- Roster (housemates) ---
+app.get("/api/roster", (req, res) => {
+  res.json(currentRoster());
+});
+
+app.post("/api/roster", (req, res) => {
+  const raw = req.body && req.body.name;
+  const name = typeof raw === "string" ? raw.trim() : "";
+  if (!name) {
+    return res.status(400).json({ error: "Name can't be empty." });
+  }
+  if (name.length > MAX_NAME_LENGTH) {
+    return res.status(400).json({ error: `Name must be ${MAX_NAME_LENGTH} characters or fewer.` });
+  }
+  const roster = currentRoster();
+  if (roster.some((n) => n.toLowerCase() === name.toLowerCase())) {
+    return res.status(409).json({ error: "That name is already on the roster." });
+  }
+  const nextPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
+  db.prepare("INSERT INTO roster (name, position) VALUES (?, ?)").run(name, nextPos);
+  res.status(201).json(currentRoster());
+});
+
+app.delete("/api/roster/:name", (req, res) => {
+  const name = req.params.name;
+  const roster = currentRoster();
+  if (roster.length <= 1) {
+    return res.status(400).json({ error: "At least one housemate has to stay on the roster." });
+  }
+  db.prepare("DELETE FROM roster WHERE name = ?").run(name);
+  res.json(currentRoster());
+});
+
 // --- Scrap leaderboard ---
 app.get("/api/claims", (req, res) => {
   const rows = db.prepare("SELECT week_key, name, coins, claimed_at FROM claims").all();
@@ -49,7 +86,7 @@ app.get("/api/claims", (req, res) => {
 
 app.post("/api/claims", (req, res) => {
   const name = req.body && req.body.name;
-  if (!name || !ROSTER.includes(name)) {
+  if (!name || !currentRoster().includes(name)) {
     return res.status(400).json({ error: "Unknown roster name." });
   }
   const weekKey = mondayKeyOf(new Date());
