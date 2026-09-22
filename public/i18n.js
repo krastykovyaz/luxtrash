@@ -19,8 +19,19 @@ window.LANGS = [
 window.T = {
   en: {
     tagline: "One glance instead of another “whose turn is it” message — verified against the City of Luxembourg's own sorting rules.",
-    stakesStrong: "Worth the extra minute:",
-    stakesRest: "Luxembourg fines improperly sorted waste €25–250, and a contaminated bin gets billed at cost to whoever holds the account — usually the landlord, not any one tenant.",
+    // A different one shows each week (see renderStakes in app.js) — same
+    // {strong, rest} shape as the old fixed stakesStrong/stakesRest pair,
+    // just eight of them instead of one. Keep index 0 as the original text.
+    stakesStories: [
+      { strong: "Worth the extra minute:", rest: "Luxembourg fines improperly sorted waste €25–250, and a contaminated bin gets billed at cost to whoever holds the account — usually the landlord, not any one tenant." },
+      { strong: "Rinse it first:", rest: "One greasy jar or unwashed tub in the Valorlux bag can get the whole bag rejected at sorting and sent to landfill instead of recycled." },
+      { strong: "No exceptions:", rest: "Batteries and light bulbs never go in a curbside bin, however small — they're always a Resource Center drop-off." },
+      { strong: "In summer especially:", rest: "A biowaste bin left too long between collections draws flies and pests fast — a quick rinse between pickups goes a long way." },
+      { strong: "Bottles and jars only:", rest: "Ceramics and window glass melt at a different temperature than bottle glass and can ruin an entire batch of recycled glass." },
+      { strong: "Tie it, don't stuff it:", rest: "An overfilled or torn Valorlux bag often gets left at the curb uncollected — the crew won't take what's already spilling out." },
+      { strong: "Keep it dry:", rest: "Cardboard has to be dry to recycle — one rainy morning left curbside can turn a whole stack to pulp." },
+      { strong: "Holidays shift the schedule:", rest: "A public holiday usually moves collection by a day rather than skipping it — check the calendar above before assuming there's no pickup." }
+    ],
     gameHeading: "Sort it", gameNote: "Beat your streak, stop the mix-ups",
     scoreLabel: "Score", streakLabel: "Streak", bestLabel: "Best streak",
     whereGoes: "Where does this go?", next: "Next", playAgain: "Play again",

@@ -176,10 +176,16 @@
   function initials(name) {
     return name.split(" ").map(function (p) { return p[0]; }).join("").slice(0, 2).toUpperCase();
   }
-  function personForWeek(date) {
+  // Weeks since the same fixed Monday the duty rotation counts from — one
+  // shared "which week is this" clock the whole app can index into,
+  // whether that's whose turn it is or which tip shows on the calendar.
+  function weeksSinceAnchor(date) {
     var mon = mondayOf(date);
     var anchorMon = mondayOf(ANCHOR_MONDAY);
-    var diffWeeks = Math.round((mon - anchorMon) / (7 * 86400000));
+    return Math.round((mon - anchorMon) / (7 * 86400000));
+  }
+  function personForWeek(date) {
+    var diffWeeks = weeksSinceAnchor(date);
     var idx = ((diffWeeks % ROSTER.length) + ROSTER.length) % ROSTER.length;
     return { name: ROSTER[idx], idx: idx };
   }
@@ -297,6 +303,7 @@
     renderDuty();
     renderGuide();
     renderLegend();
+    renderStakes();
     renderCalendar();
     renderTaskForm();
     renderTask(currentTask);
@@ -823,6 +830,18 @@
     });
     var vn = document.getElementById("verifyNote");
     if (!vn.dataset.custom) vn.textContent = fmt("verifyPrefix", {}) + " " + fmtLong(today);
+  }
+
+  // ---- "worth knowing" tip on the Full Calendar section: a different one
+  // each week, same week clock as the duty rotation, so it's identical for
+  // everyone in the house at any given moment and just moves on Monday. ----
+  function renderStakes() {
+    var stories = tr("stakesStories");
+    if (!stories || !stories.length) return;
+    var idx = ((weeksSinceAnchor(today) % stories.length) + stories.length) % stories.length;
+    var story = stories[idx];
+    document.getElementById("stakesStrong").textContent = story.strong;
+    document.getElementById("stakesRest").textContent = story.rest;
   }
 
   // ---- legend ----
