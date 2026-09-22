@@ -17,7 +17,7 @@ const multer = require("multer");
 const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
-const { sendDailyReminders, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
 const { SCHEDULE } = require("./rotation");
@@ -219,7 +219,7 @@ app.get("/api/subscribe/confirm/:token", (req, res) => {
     return res.status(404).send("<p>That confirmation link is invalid or already used. Close this tab and subscribe again from Bin Duty.</p>");
   }
   db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
-  res.send("<p>Confirmed — you'll get the weekly bin duty reminder by email. You can close this tab.</p>");
+  res.send("<p>Confirmed — you'll get an email the evening before bin duty, plus a heads-up on who's up next week. You can close this tab.</p>");
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
@@ -261,5 +261,24 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
     // An error here must never take the whole process down with it — it's
     // a background job, not a request handler.
     console.error("Reminder run threw:", err.message);
+  }
+});
+
+// End-of-week heads-up — who's on duty starting tomorrow, sent to
+// everyone (not just that person) so the whole house finds out in advance
+// instead of mid-week. Sunday 18:00 by default, independently configurable
+// from NOTIFY_CRON since it's a different kind of message on its own cadence.
+const DEFAULT_WEEK_AHEAD_CRON = "0 18 * * 0";
+const WEEK_AHEAD_CRON = process.env.WEEK_AHEAD_CRON || DEFAULT_WEEK_AHEAD_CRON;
+if (!cron.validate(WEEK_AHEAD_CRON)) {
+  console.error(`WEEK_AHEAD_CRON "${WEEK_AHEAD_CRON}" is not a valid cron expression — falling back to "${DEFAULT_WEEK_AHEAD_CRON}".`);
+}
+cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AHEAD_CRON, async () => {
+  try {
+    const result = await sendWeekAheadNotices(db, currentRoster());
+    console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
+      (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+  } catch (err) {
+    console.error("Week-ahead notice run threw:", err.message);
   }
 });
