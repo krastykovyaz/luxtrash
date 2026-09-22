@@ -1,5 +1,6 @@
 const { t, binLabel } = require("./i18n");
 const { codesFor, mondayOf, personForWeek } = require("./rotation");
+const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
 
 let transporter = null;
 let warnedMissingConfig = false;
@@ -42,7 +43,15 @@ function buildTomorrowMessage(lang, roster, tomorrow) {
     "",
     t(lang, "dutyMsgFooter")
   ].join("\n");
-  return { subject, text, person, label };
+  const html = wrapEmail(`
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${COLORS.inkFaint};margin-bottom:10px;">${escapeHtml(t(lang, "tonightLabel"))}</div>
+    <div style="margin-bottom:18px;">${binBadges(codes, (c) => binLabel(lang, c))}</div>
+    <div style="padding-top:14px;border-top:1px dashed ${COLORS.line};font-size:14px;">
+      ${escapeHtml(t(lang, "dutyMsgHeading"))} <strong style="color:${COLORS.accent};">${escapeHtml(person)}</strong>
+    </div>
+    <div style="margin-top:14px;font-size:13px;color:${COLORS.inkSoft};">${escapeHtml(t(lang, "dutyMsgFooter"))}</div>
+  `);
+  return { subject, text, html, person, label };
 }
 
 // Sends a "click to confirm" email for double opt-in — an open, unverified
@@ -55,11 +64,20 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl) {
     err.code = "NO_SMTP";
     throw err;
   }
+  const bodyText = t(lang, "confirmBody").replace("{name}", name);
+  const html = wrapEmail(`
+    <p style="margin:0 0 20px;">${escapeHtml(bodyText)}</p>
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background-color:${COLORS.accent};border-radius:6px;">
+      <a href="${escapeHtml(confirmUrl)}" style="display:inline-block;padding:12px 26px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;color:${COLORS.accentInk};text-decoration:none;">${escapeHtml(t(lang, "confirmCta"))}</a>
+    </td></tr></table>
+    <p style="margin:18px 0 0;font-size:12px;color:${COLORS.inkFaint};word-break:break-all;">${escapeHtml(confirmUrl)}</p>
+  `);
   await transport.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: email,
     subject: t(lang, "confirmSubject"),
-    text: `${t(lang, "confirmBody").replace("{name}", name)}\n\n${confirmUrl}`
+    text: `${bodyText}\n\n${confirmUrl}`,
+    html
   });
 }
 
@@ -88,7 +106,8 @@ async function sendDailyReminders(db, roster) {
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: account.email,
         subject: msg.subject,
-        text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${msg.text}`
+        text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${msg.text}`,
+        html: msg.html
       });
       sent++;
     } catch (err) {
@@ -107,7 +126,11 @@ function buildWeekAheadMessage(lang, roster, nextMonday) {
   const person = personForWeek(nextMonday, roster);
   const subject = `${t(lang, "weekAheadSubject")} ${person}`;
   const text = t(lang, "weekAheadBody").replace("{name}", person);
-  return { subject, text, person };
+  const html = wrapEmail(`
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${COLORS.inkFaint};margin-bottom:10px;">${escapeHtml(t(lang, "weekAheadSubject"))}</div>
+    <div style="font-size:22px;font-weight:700;color:${COLORS.accent};">${escapeHtml(person)}</div>
+  `);
+  return { subject, text, html, person };
 }
 
 async function sendWeekAheadNotices(db, roster) {
@@ -128,7 +151,8 @@ async function sendWeekAheadNotices(db, roster) {
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: account.email,
         subject: msg.subject,
-        text: msg.text
+        text: msg.text,
+        html: msg.html
       });
       sent++;
     } catch (err) {
@@ -139,8 +163,8 @@ async function sendWeekAheadNotices(db, roster) {
 }
 
 // Emails a copy of one camera-check result to whoever asked for it. Text
-// only — the photo itself is never saved anywhere (server or email), only
-// the identification Gemini returned.
+// only in the sense that no photo is ever attached or saved anywhere — the
+// email itself is still styled HTML, same as the rest.
 async function sendCheckResult(email, lang, data) {
   const transport = getTransporter();
   if (!transport) {
@@ -149,11 +173,18 @@ async function sendCheckResult(email, lang, data) {
     throw err;
   }
   const title = binLabel(lang, data.code);
+  const html = wrapEmail(`
+    <div style="margin-bottom:14px;">${binBadges(data.code, () => title)}</div>
+    <p style="margin:0;font-size:14px;line-height:1.5;">
+      ${data.item ? `<strong style="color:${COLORS.accent};">${escapeHtml(data.item)}.</strong> ` : ""}${escapeHtml(data.why || "")}
+    </p>
+  `);
   await transport.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: email,
     subject: `${t(lang, "scanHeading")} — ${title}`,
-    text: `${data.item || ""}\n\n${title} (${data.code})\n${data.why || ""}`
+    text: `${data.item || ""}\n\n${title} (${data.code})\n${data.why || ""}`,
+    html
   });
 }
 

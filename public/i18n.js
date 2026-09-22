@@ -81,6 +81,7 @@ window.T = {
     notifyPending: "Almost there — check your email and click the link to confirm.",
     confirmSubject: "Confirm your Bin Duty reminders",
     confirmBody: "Hi {name}, click the link below to start getting bin duty reminders by email. If this wasn't you, ignore this — nothing happens until you click.",
+    confirmCta: "Confirm",
     weekAheadSubject: "Next week's bin duty:",
     weekAheadBody: "{name} is on bin duty next week.",
     binLabels: { M: "Household", E: "Valorlux", P: "Paper", V: "Glass", B: "Biowaste", R: "Resource Ctr" }
@@ -149,6 +150,7 @@ window.T = {
     notifyPending: "Casi listo — revisa tu correo y haz clic en el enlace para confirmar.",
     confirmSubject: "Confirma tus recordatorios de Bin Duty",
     confirmBody: "Hola {name}, haz clic en el enlace de abajo para empezar a recibir los recordatorios por correo. Si no fuiste tú, ignora esto — no pasa nada hasta que hagas clic.",
+    confirmCta: "Confirmar",
     weekAheadSubject: "Turno de la próxima semana:",
     weekAheadBody: "{name} tiene el turno de basura la próxima semana.",
     binLabels: { M: "Doméstico", E: "Valorlux", P: "Papel", V: "Vidrio", B: "Orgánico", R: "Centro de Recursos" }
@@ -217,6 +219,7 @@ window.T = {
     notifyPending: "Presque fini — vérifie ton e-mail et clique sur le lien pour confirmer.",
     confirmSubject: "Confirme tes rappels Bin Duty",
     confirmBody: "Salut {name}, clique sur le lien ci-dessous pour commencer à recevoir les rappels par e-mail. Si ce n'était pas toi, ignore ce message — rien ne se passe tant que tu ne cliques pas.",
+    confirmCta: "Confirmer",
     weekAheadSubject: "Corvée de la semaine prochaine :",
     weekAheadBody: "{name} a la corvée poubelles la semaine prochaine.",
     binLabels: { M: "Ménager", E: "Valorlux", P: "Papier", V: "Verre", B: "Biodéchets", R: "Centre de ressources" }
@@ -285,6 +288,7 @@ window.T = {
     notifyPending: "Quase lá — verifique seu e-mail e clique no link para confirmar.",
     confirmSubject: "Confirme seus lembretes do Bin Duty",
     confirmBody: "Oi {name}, clique no link abaixo para começar a receber os lembretes por e-mail. Se não foi você, ignore isso — nada acontece até você clicar.",
+    confirmCta: "Confirmar",
     weekAheadSubject: "Escala da próxima semana:",
     weekAheadBody: "{name} está de escala na próxima semana.",
     binLabels: { M: "Doméstico", E: "Valorlux", P: "Papel", V: "Vidro", B: "Orgânico", R: "Centro de Recursos" }
@@ -353,6 +357,7 @@ window.T = {
     notifyPending: "Почти готово — проверьте почту и перейдите по ссылке, чтобы подтвердить.",
     confirmSubject: "Подтвердите напоминания Bin Duty",
     confirmBody: "Привет, {name}! Перейдите по ссылке ниже, чтобы начать получать напоминания по почте. Если это были не вы — просто проигнорируйте письмо, ничего не произойдёт, пока вы не нажмёте на ссылку.",
+    confirmCta: "Подтвердить",
     weekAheadSubject: "Дежурство на следующей неделе:",
     weekAheadBody: "{name} дежурит по мусору на следующей неделе.",
     binLabels: { M: "Бытовые", E: "Valorlux", P: "Бумага", V: "Стекло", B: "Органика", R: "Центр ресурсов" }
@@ -421,6 +426,7 @@ window.T = {
     notifyPending: "Bal do — kuckt Är E-Mail a klickt op de Link fir ze confirméieren.",
     confirmSubject: "Confirméiert Är Bin Duty Erënnerungen",
     confirmBody: "Salut {name}, klickt op de Link hei drënner fir Erënnerungen per E-Mail ze kréien. Wann Dir dat net waart, ignoréiert dëst — et geschitt näischt bis Dir klickt.",
+    confirmCta: "Confirméieren",
     weekAheadSubject: "Corvée vun der nächster Woch:",
     weekAheadBody: "{name} ass nächst Woch un der Corvée.",
     binLabels: { M: "Haushaltsofall", E: "Valorlux", P: "Pabeier", V: "Glas", B: "Bio-Offall", R: "Ressourcenzentrum" }
@@ -489,6 +495,7 @@ window.T = {
     notifyPending: "もう少しです ― メールを確認してリンクをクリックし、登録を確定してください。",
     confirmSubject: "Bin Dutyのリマインダーを確認してください",
     confirmBody: "{name}さん、こんにちは。下のリンクをクリックすると、リマインダーをメールで受け取れるようになります。心当たりがない場合は無視してください ― クリックするまで何も起こりません。",
+    confirmCta: "確認する",
     weekAheadSubject: "来週のゴミ当番:",
     weekAheadBody: "来週は{name}さんがゴミ当番です。",
     binLabels: { M: "家庭ごみ", E: "ヴァロルックス", P: "紙", V: "ガラス", B: "生ごみ", R: "リソースセンター" }
