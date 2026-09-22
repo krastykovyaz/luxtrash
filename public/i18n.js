@@ -66,6 +66,7 @@ window.T = {
     meNotPickedForDonate: "Pick who you are first.",
     youHeading: "Who are you?", mePickPrompt: "Pick your name…",
     notifyPickNameFirst: "Pick your name above first — reminders go to the person you pick.",
+    landingTagline: "Split the bins, one house at a time.",
     housesLabel: "Houses", housesEmpty: "No houses yet — build one below.",
     housesCurrentTag: "This house", housesSwitchHint: "Tap to switch",
     housesCopyLink: "Copy link", housesCopied: "Copied!",

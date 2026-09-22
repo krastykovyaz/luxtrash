@@ -30,6 +30,14 @@ const coins = require("./coins");
 // to this one house for now; interactive email actions work per-house).
 const defaultDb = getDb(DEFAULT_SLUG);
 
+// The original house now has to be opened the same way as any other one —
+// a real invite link — instead of being what loads with no ?h= at all.
+// This mints (once, ever — stable across restarts) a proper unguessable
+// slug for it and logs it so it's recoverable from the server even if it's
+// lost client-side.
+const originalHouse = houses.ensureOriginalHouse("Bin Duty");
+console.log(`Original house invite link: /?h=${originalHouse.slug}`);
+
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -78,21 +86,31 @@ const upload = multer({
 });
 
 // --- House resolution: every /api request (except building/looking up a
-// house) carries its house as ?h=<slug>. No slug, or the reserved default
-// slug, means the original house — so every link, bookmark and API call
-// that predates multi-house keeps working exactly as it did before. An
-// unknown slug is a 404, not a silent fall-back to someone else's house. ---
+// house) carries its house as ?h=<slug> — no more implicit default. No
+// slug at all means no house was specified (the client should never send
+// this; it shows a "build or join" landing page instead of ever calling
+// these routes with no house picked). An unknown slug is a 404. ---
 function resolveHouse(req, res, next) {
   const raw = typeof req.query.h === "string" ? req.query.h.trim().toLowerCase() : "";
-  if (!raw || raw === DEFAULT_SLUG) {
-    req.house = { slug: DEFAULT_SLUG, db: defaultDb, name: "Bin Duty", city: null };
-    return next();
+  if (!raw) {
+    return res.status(400).json({ error: "No house specified — use your house's invite link.", code: "NO_HOUSE_SPECIFIED" });
   }
   const row = houses.getHouse(raw);
   if (!row) {
     return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
   }
-  req.house = { slug: row.slug, db: getDb(row.slug), name: row.name, city: row.city, language: row.language };
+  // The original house's public slug still opens its original database —
+  // req.house.slug stays the internal DEFAULT_SLUG sentinel so every other
+  // "is this the original house" check in this file keeps working.
+  // publicSlug is always the real, URL-usable slug (row.slug) — needed
+  // anywhere a link back into this house gets built (e.g. the subscribe
+  // confirmation email), since req.house.slug becomes the internal
+  // DEFAULT_SLUG sentinel for the original house.
+  if (row.is_original) {
+    req.house = { slug: DEFAULT_SLUG, publicSlug: row.slug, db: defaultDb, name: row.name, city: row.city, language: row.language };
+  } else {
+    req.house = { slug: row.slug, publicSlug: row.slug, db: getDb(row.slug), name: row.name, city: row.city, language: row.language };
+  }
   next();
 }
 
@@ -113,7 +131,7 @@ app.get("/api/houses/:slug", (req, res) => {
   if (!house) {
     return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
   }
-  const db = getDb(house.slug);
+  const db = house.is_original ? defaultDb : getDb(house.slug);
   const memberCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
   res.json({ slug: house.slug, name: house.name, city: house.city, language: house.language, memberCount });
 });
@@ -418,10 +436,12 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
     "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language, confirmed = 0, confirm_token = excluded.confirm_token"
   ).run(email, name, language, new Date().toISOString(), token);
 
+  // Always carries ?h= now — there's no implicit default house left for a
+  // bare confirm link to fall back to.
   const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}` +
-    (req.house.slug === DEFAULT_SLUG ? "" : `?h=${encodeURIComponent(req.house.slug)}`);
+    `?h=${encodeURIComponent(req.house.publicSlug)}`;
   try {
-    await sendConfirmationEmail(email, language, name, confirmUrl);
+    await sendConfirmationEmail(email, language, name, confirmUrl, req.house.publicSlug);
     res.status(202).json({ pending: true });
   } catch (err) {
     const status = err.code === "NO_SMTP" ? 503 : 502;
@@ -523,7 +543,7 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
-    const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb));
+    const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     if (!result.dueTomorrow) {
       console.log("Reminder check: nothing due tomorrow, no mail sent.");
       return;
@@ -548,7 +568,7 @@ if (!cron.validate(WEEK_AHEAD_CRON)) {
 }
 cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AHEAD_CRON, async () => {
   try {
-    const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb));
+    const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
   } catch (err) {

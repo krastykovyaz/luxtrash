@@ -490,8 +490,20 @@
   .houses-empty { font-size: 12px; color: var(--ink-faint); padding: 4px 2px; }
   .houses-actions { display: flex; gap: 8px; }
   .houses-actions .stamp-btn { flex: 1; padding: 11px; font-size: 12.5px; }
-  #buildHouseForm, #joinHouseForm { display: flex; flex-direction: column; gap: 8px; }
-  #buildHouseForm .claim-row .claim-select, #joinHouseForm .claim-row .claim-select { flex: 1; min-width: 0; }
+  .house-form { display: flex; flex-direction: column; gap: 8px; }
+  .house-form[hidden] { display: none; }
+  .house-form .claim-row .claim-select { flex: 1; min-width: 0; }
+
+  /* ---- landing page (no house selected — build or join only) ---- */
+  #landingPage { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
+  #landingPage[hidden] { display: none; }
+  .landing-card { width: 100%; max-width: 360px; padding: 28px 22px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+  .landing-logo { width: 60px; height: 60px; border-radius: 17px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 28px; margin-bottom: 6px; }
+  .landing-brand { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 0.04em; color: var(--accent); }
+  .landing-tagline { font-size: 12.5px; color: var(--ink-faint); margin-bottom: 18px; }
+  .landing-card .house-list { width: 100%; }
+  .landing-card .houses-actions { width: 100%; margin-top: 4px; }
+  .landing-card .house-form { width: 100%; margin-top: 4px; }
 
   /* ---- house-not-found full page ---- */
   #houseNotFound { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -768,7 +780,7 @@
         <button class="stamp-btn ghost" id="joinHouseToggleBtn" type="button" data-i18n="joinHouseBtn"></button>
       </div>
 
-      <div id="buildHouseForm" hidden>
+      <div class="house-form" id="buildHouseForm" hidden>
         <div class="claim-row">
           <input type="text" id="buildHouseName" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseNamePlaceholder">
         </div>
@@ -779,7 +791,7 @@
         <div class="claim-status" id="buildHouseStatus"></div>
       </div>
 
-      <div id="joinHouseForm" hidden>
+      <div class="house-form" id="joinHouseForm" hidden>
         <div class="claim-row">
           <input type="text" id="joinHouseInput" class="claim-select" data-i18n-placeholder="joinHouseInputPlaceholder">
           <button class="stamp-btn" id="joinHouseSubmitBtn" type="button" data-i18n="joinHouseSubmitBtn"></button>
@@ -790,6 +802,40 @@
   </section>
 
   <footer data-i18n="footerText" data-view="roster"></footer>
+</div>
+
+<div id="landingPage" hidden>
+  <div class="landing-card poster">
+    <div class="landing-logo">🗑️</div>
+    <div class="landing-brand">BIN DUTY</div>
+    <div class="landing-tagline" data-i18n="landingTagline"></div>
+
+    <div class="house-list" id="landingHousesList"></div>
+
+    <div class="houses-actions">
+      <button class="stamp-btn" id="landingBuildToggleBtn" type="button" data-i18n="buildHouseBtn"></button>
+      <button class="stamp-btn ghost" id="landingJoinToggleBtn" type="button" data-i18n="joinHouseBtn"></button>
+    </div>
+
+    <div class="house-form" id="landingBuildForm" hidden>
+      <div class="claim-row">
+        <input type="text" id="landingBuildName" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseNamePlaceholder">
+      </div>
+      <div class="claim-row">
+        <input type="text" id="landingBuildCity" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseCityPlaceholder">
+        <button class="stamp-btn" id="landingBuildSubmitBtn" type="button" data-i18n="buildHouseSubmitBtn"></button>
+      </div>
+      <div class="claim-status" id="landingBuildStatus"></div>
+    </div>
+
+    <div class="house-form" id="landingJoinForm" hidden>
+      <div class="claim-row">
+        <input type="text" id="landingJoinInput" class="claim-select" data-i18n-placeholder="joinHouseInputPlaceholder">
+        <button class="stamp-btn" id="landingJoinSubmitBtn" type="button" data-i18n="joinHouseSubmitBtn"></button>
+      </div>
+      <div class="claim-status" id="landingJoinStatus"></div>
+    </div>
+  </div>
 </div>
 
 <div id="houseNotFound" hidden>

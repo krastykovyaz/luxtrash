@@ -19,9 +19,17 @@ db.exec(`
     name TEXT NOT NULL,
     city TEXT,
     language TEXT NOT NULL DEFAULT 'en',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    is_original INTEGER NOT NULL DEFAULT 0
   )
 `);
+
+// Idempotent migration for installs that had the houses table before
+// is_original existed.
+var houseCols = db.prepare("PRAGMA table_info(houses)").all().map(function (c) { return c.name; });
+if (houseCols.indexOf("is_original") === -1) {
+  db.exec("ALTER TABLE houses ADD COLUMN is_original INTEGER NOT NULL DEFAULT 0");
+}
 
 const MAX_NAME_LENGTH = 60;
 const MAX_CITY_LENGTH = 60;
@@ -93,4 +101,26 @@ function createHouse({ name, city, language }) {
   return getHouse(slug);
 }
 
-module.exports = { getHouse, createHouse };
+// The app's original house (the one that existed before multi-house
+// support) now has to be reached the same way as any other — a real,
+// unguessable invite slug — instead of being whatever loads with no ?h= at
+// all. This mints that slug exactly once (persisted here, so it's stable
+// across restarts and deploys) and is idempotent: every later call just
+// returns the same row.
+function ensureOriginalHouse(name) {
+  var existing = db.prepare("SELECT * FROM houses WHERE is_original = 1").get();
+  if (existing) return existing;
+
+  var base = slugifyBase(name);
+  var slug;
+  for (var attempt = 0; attempt < 8; attempt++) {
+    slug = base + "-" + randomSuffix();
+    if (!getHouse(slug)) break;
+  }
+  db.prepare(
+    "INSERT INTO houses (slug, name, city, language, created_at, is_original) VALUES (?, ?, NULL, 'en', ?, 1)"
+  ).run(slug, name, new Date().toISOString());
+  return getHouse(slug);
+}
+
+module.exports = { getHouse, createHouse, ensureOriginalHouse };

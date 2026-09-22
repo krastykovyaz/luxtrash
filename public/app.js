@@ -58,7 +58,10 @@
   (function initMyHouses() {
     try {
       var saved = JSON.parse(localStorage.getItem("binDutyMyHouses") || "[]");
-      if (Array.isArray(saved)) MY_HOUSES = saved;
+      // slug === "" used to mean "the original house" before it needed its
+      // own real invite link too — that entry is stale now (it would point
+      // at the landing page), so it's dropped on load rather than shown.
+      if (Array.isArray(saved)) MY_HOUSES = saved.filter(function (h) { return h && h.slug; });
     } catch (e) {}
   })();
   function rememberHouse(slug, name) {
@@ -1280,154 +1283,181 @@
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no
   // accounts, nothing server-side tracks "your" houses, it's purely what's
-  // saved in this browser (MY_HOUSES / rememberHouse, defined up top). ----
-  var housesListEl = document.getElementById("housesList");
-  var buildHouseToggleBtn = document.getElementById("buildHouseToggleBtn");
-  var joinHouseToggleBtn = document.getElementById("joinHouseToggleBtn");
-  var buildHouseForm = document.getElementById("buildHouseForm");
-  var joinHouseForm = document.getElementById("joinHouseForm");
-  var buildHouseName = document.getElementById("buildHouseName");
-  var buildHouseCity = document.getElementById("buildHouseCity");
-  var buildHouseSubmitBtn = document.getElementById("buildHouseSubmitBtn");
-  var buildHouseStatus = document.getElementById("buildHouseStatus");
-  var joinHouseInput = document.getElementById("joinHouseInput");
-  var joinHouseSubmitBtn = document.getElementById("joinHouseSubmitBtn");
-  var joinHouseStatus = document.getElementById("joinHouseStatus");
+  // saved in this browser (MY_HOUSES / rememberHouse, defined up top).
+  //
+  // One factory, two instances: the You tab's card (used while already
+  // inside a house, to see/switch/add more) and the landing page (used
+  // with no house at all — the only two ways in from there are build or
+  // join, there's nothing "current" to show). ----
+  function initHousesWidget(ids) {
+    var listEl = document.getElementById(ids.list);
+    var buildToggleBtn = document.getElementById(ids.buildToggle);
+    var joinToggleBtn = document.getElementById(ids.joinToggle);
+    var buildForm = document.getElementById(ids.buildForm);
+    var joinForm = document.getElementById(ids.joinForm);
+    var buildName = document.getElementById(ids.buildName);
+    var buildCity = document.getElementById(ids.buildCity);
+    var buildSubmitBtn = document.getElementById(ids.buildSubmit);
+    var buildStatus = document.getElementById(ids.buildStatus);
+    var joinInput = document.getElementById(ids.joinInput);
+    var joinSubmitBtn = document.getElementById(ids.joinSubmit);
+    var joinStatus = document.getElementById(ids.joinStatus);
 
-  function renderHousesList() {
-    housesListEl.innerHTML = "";
-    if (!MY_HOUSES.length) {
-      var empty = document.createElement("div");
-      empty.className = "houses-empty";
-      empty.textContent = tr("housesEmpty");
-      housesListEl.appendChild(empty);
-      return;
-    }
-    MY_HOUSES.forEach(function (h) {
-      var row = document.createElement("div");
-      row.className = "house-row" + (h.slug === HOUSE_SLUG ? " current" : "");
+    function render() {
+      listEl.innerHTML = "";
+      if (!MY_HOUSES.length) {
+        var empty = document.createElement("div");
+        empty.className = "houses-empty";
+        empty.textContent = tr("housesEmpty");
+        listEl.appendChild(empty);
+        return;
+      }
+      MY_HOUSES.forEach(function (h) {
+        var row = document.createElement("div");
+        row.className = "house-row" + (h.slug === HOUSE_SLUG ? " current" : "");
 
-      var icon = document.createElement("div");
-      icon.className = "house-row-icon";
-      icon.textContent = "\u{1F3E0}";
-      row.appendChild(icon);
+        var icon = document.createElement("div");
+        icon.className = "house-row-icon";
+        icon.textContent = "\u{1F3E0}";
+        row.appendChild(icon);
 
-      var text = document.createElement("div");
-      text.className = "house-row-text";
-      var name = document.createElement("div");
-      name.className = "house-row-name";
-      name.textContent = h.name;
-      text.appendChild(name);
-      var sub = document.createElement("div");
-      sub.className = "house-row-sub";
-      sub.textContent = h.slug === HOUSE_SLUG ? tr("housesCurrentTag") : tr("housesSwitchHint");
-      text.appendChild(sub);
-      row.appendChild(text);
+        var text = document.createElement("div");
+        text.className = "house-row-text";
+        var name = document.createElement("div");
+        name.className = "house-row-name";
+        name.textContent = h.name;
+        text.appendChild(name);
+        var sub = document.createElement("div");
+        sub.className = "house-row-sub";
+        sub.textContent = h.slug === HOUSE_SLUG ? tr("housesCurrentTag") : tr("housesSwitchHint");
+        text.appendChild(sub);
+        row.appendChild(text);
 
-      var copyBtn = document.createElement("button");
-      copyBtn.className = "house-row-copy";
-      copyBtn.type = "button";
-      copyBtn.textContent = tr("housesCopyLink");
-      copyBtn.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        var link = houseLink(h.slug);
-        var mark = function () {
-          copyBtn.textContent = tr("housesCopied");
-          copyBtn.classList.add("copied");
-          setTimeout(function () {
-            copyBtn.textContent = tr("housesCopyLink");
-            copyBtn.classList.remove("copied");
-          }, 1800);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(link).then(mark).catch(function () { window.prompt(tr("housesCopyManual"), link); });
-        } else {
-          window.prompt(tr("housesCopyManual"), link);
+        var copyBtn = document.createElement("button");
+        copyBtn.className = "house-row-copy";
+        copyBtn.type = "button";
+        copyBtn.textContent = tr("housesCopyLink");
+        copyBtn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var link = houseLink(h.slug);
+          var mark = function () {
+            copyBtn.textContent = tr("housesCopied");
+            copyBtn.classList.add("copied");
+            setTimeout(function () {
+              copyBtn.textContent = tr("housesCopyLink");
+              copyBtn.classList.remove("copied");
+            }, 1800);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(mark).catch(function () { window.prompt(tr("housesCopyManual"), link); });
+          } else {
+            window.prompt(tr("housesCopyManual"), link);
+          }
+        });
+        row.appendChild(copyBtn);
+
+        if (h.slug !== HOUSE_SLUG) {
+          row.style.cursor = "pointer";
+          row.addEventListener("click", function () { location.href = houseLink(h.slug); });
         }
+
+        listEl.appendChild(row);
       });
-      row.appendChild(copyBtn);
+    }
 
-      if (h.slug !== HOUSE_SLUG) {
-        row.style.cursor = "pointer";
-        row.addEventListener("click", function () { location.href = houseLink(h.slug); });
-      }
+    function closeForms() {
+      buildForm.hidden = true;
+      joinForm.hidden = true;
+      buildStatus.textContent = "";
+      joinStatus.textContent = "";
+    }
 
-      housesListEl.appendChild(row);
+    buildToggleBtn.addEventListener("click", function () {
+      var opening = buildForm.hidden;
+      closeForms();
+      buildForm.hidden = !opening;
+      if (opening) buildName.focus();
     });
+    joinToggleBtn.addEventListener("click", function () {
+      var opening = joinForm.hidden;
+      closeForms();
+      joinForm.hidden = !opening;
+      if (opening) joinInput.focus();
+    });
+
+    buildSubmitBtn.addEventListener("click", function () {
+      var name = buildName.value.trim();
+      if (!name) { buildStatus.textContent = tr("buildHouseNameRequired"); return; }
+      buildSubmitBtn.disabled = true;
+      buildStatus.textContent = tr("buildHouseBuilding");
+      fetch("/api/houses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name, city: buildCity.value.trim(), language: currentLang })
+      })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+          return r.json();
+        })
+        .then(function (house) {
+          rememberHouse(house.slug, house.name);
+          location.href = houseLink(house.slug);
+        })
+        .catch(function (e) {
+          buildStatus.textContent = e.message || tr("buildHouseFailed");
+          buildSubmitBtn.disabled = false;
+        });
+    });
+
+    joinSubmitBtn.addEventListener("click", function () {
+      // A slug and the human-facing "code" are the same string — see
+      // houses.js — so whatever someone pastes (a bare code or a full
+      // ?h=... link) just needs the slug picked out of it.
+      var raw = joinInput.value.trim();
+      var slug = raw;
+      try {
+        if (/^https?:\/\//i.test(raw)) {
+          slug = new URL(raw).searchParams.get("h") || raw;
+        }
+      } catch (e) {}
+      slug = slug.toLowerCase().replace(/\s+/g, "");
+      if (!slug) { joinStatus.textContent = tr("joinHouseEmpty"); return; }
+      joinSubmitBtn.disabled = true;
+      joinStatus.textContent = tr("joinHouseChecking");
+      fetch("/api/houses/" + encodeURIComponent(slug))
+        .then(function (r) {
+          if (!r.ok) throw new Error(tr("joinHouseNotFound"));
+          return r.json();
+        })
+        .then(function (house) {
+          rememberHouse(house.slug, house.name);
+          location.href = houseLink(house.slug);
+        })
+        .catch(function (e) {
+          joinStatus.textContent = e.message || tr("joinHouseNotFound");
+          joinSubmitBtn.disabled = false;
+        });
+    });
+
+    return { render: render };
   }
 
-  function closeHouseForms() {
-    buildHouseForm.hidden = true;
-    joinHouseForm.hidden = true;
-    buildHouseStatus.textContent = "";
-    joinHouseStatus.textContent = "";
-  }
-
-  buildHouseToggleBtn.addEventListener("click", function () {
-    var opening = buildHouseForm.hidden;
-    closeHouseForms();
-    buildHouseForm.hidden = !opening;
-    if (opening) buildHouseName.focus();
+  var housesWidget = initHousesWidget({
+    list: "housesList", buildToggle: "buildHouseToggleBtn", joinToggle: "joinHouseToggleBtn",
+    buildForm: "buildHouseForm", joinForm: "joinHouseForm", buildName: "buildHouseName",
+    buildCity: "buildHouseCity", buildSubmit: "buildHouseSubmitBtn", buildStatus: "buildHouseStatus",
+    joinInput: "joinHouseInput", joinSubmit: "joinHouseSubmitBtn", joinStatus: "joinHouseStatus"
   });
-  joinHouseToggleBtn.addEventListener("click", function () {
-    var opening = joinHouseForm.hidden;
-    closeHouseForms();
-    joinHouseForm.hidden = !opening;
-    if (opening) joinHouseInput.focus();
-  });
+  function renderHousesList() { housesWidget.render(); }
 
-  buildHouseSubmitBtn.addEventListener("click", function () {
-    var name = buildHouseName.value.trim();
-    if (!name) { buildHouseStatus.textContent = tr("buildHouseNameRequired"); return; }
-    buildHouseSubmitBtn.disabled = true;
-    buildHouseStatus.textContent = tr("buildHouseBuilding");
-    fetch("/api/houses", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: name, city: buildHouseCity.value.trim(), language: currentLang })
-    })
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
-        return r.json();
-      })
-      .then(function (house) {
-        rememberHouse(house.slug, house.name);
-        location.href = houseLink(house.slug);
-      })
-      .catch(function (e) {
-        buildHouseStatus.textContent = e.message || tr("buildHouseFailed");
-        buildHouseSubmitBtn.disabled = false;
-      });
-  });
-
-  joinHouseSubmitBtn.addEventListener("click", function () {
-    // A slug and the human-facing "code" are the same string — see
-    // houses.js — so whatever someone pastes (a bare code or a full
-    // ?h=... link) just needs the slug picked out of it.
-    var raw = joinHouseInput.value.trim();
-    var slug = raw;
-    try {
-      if (/^https?:\/\//i.test(raw)) {
-        slug = new URL(raw).searchParams.get("h") || raw;
-      }
-    } catch (e) {}
-    slug = slug.toLowerCase().replace(/\s+/g, "");
-    if (!slug) { joinHouseStatus.textContent = tr("joinHouseEmpty"); return; }
-    joinHouseSubmitBtn.disabled = true;
-    joinHouseStatus.textContent = tr("joinHouseChecking");
-    fetch("/api/houses/" + encodeURIComponent(slug))
-      .then(function (r) {
-        if (!r.ok) throw new Error(tr("joinHouseNotFound"));
-        return r.json();
-      })
-      .then(function (house) {
-        rememberHouse(house.slug, house.name);
-        location.href = houseLink(house.slug);
-      })
-      .catch(function (e) {
-        joinHouseStatus.textContent = e.message || tr("joinHouseNotFound");
-        joinHouseSubmitBtn.disabled = false;
-      });
+  // The landing page's own instance — same widget, different DOM, shown
+  // full-page (see startApp/landing bootstrap below) when no house is
+  // selected at all.
+  var landingHousesWidget = initHousesWidget({
+    list: "landingHousesList", buildToggle: "landingBuildToggleBtn", joinToggle: "landingJoinToggleBtn",
+    buildForm: "landingBuildForm", joinForm: "landingJoinForm", buildName: "landingBuildName",
+    buildCity: "landingBuildCity", buildSubmit: "landingBuildSubmitBtn", buildStatus: "landingBuildStatus",
+    joinInput: "landingJoinInput", joinSubmit: "landingJoinSubmitBtn", joinStatus: "landingJoinStatus"
   });
 
   // ---- "You": who am I, my achievements ----
@@ -1912,15 +1942,34 @@
 
   // A house link (?h=slug) has to actually exist before the rest of the app
   // tries to use it — an old/mistyped/deleted-house link shows a plain
-  // "this house doesn't exist" page instead of a broken, empty app. The
-  // original house (no ?h=) skips this lookup entirely.
+  // "this house doesn't exist" page instead of a broken, empty app.
   var houseNotFoundEl = document.getElementById("houseNotFound");
   var houseNotFoundHomeLink = document.getElementById("houseNotFoundHomeLink");
   if (houseNotFoundHomeLink) houseNotFoundHomeLink.href = location.pathname;
 
+  // Same trick as houseNotFound above: neither startApp() nor applyLang()
+  // ever run on this path, so this page's own [data-i18n] text needs
+  // filling directly.
+  function fillI18n(root) {
+    root.querySelectorAll("[data-i18n]").forEach(function (el) {
+      var val = tr(el.getAttribute("data-i18n"));
+      if (val != null) el.textContent = val;
+    });
+    root.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+      var val = tr(el.getAttribute("data-i18n-placeholder"));
+      if (val != null) el.placeholder = val;
+    });
+  }
+
+  // No house at all — every session starts here now. Nothing loads, nothing
+  // is assumed: the only two ways forward are building a new house or
+  // opening one you already have a link/code for (including this device's
+  // own remembered houses, if any).
   if (!HOUSE_SLUG) {
-    rememberHouse("", "Bin Duty");
-    startApp();
+    var landingEl = document.getElementById("landingPage");
+    fillI18n(landingEl);
+    landingHousesWidget.render();
+    landingEl.hidden = false;
   } else {
     fetch("/api/houses/" + encodeURIComponent(HOUSE_SLUG))
       .then(function (r) { if (!r.ok) throw new Error("not found"); return r.json(); })
@@ -1937,13 +1986,7 @@
         if (appEl) appEl.style.display = "none";
         var hazardTop = document.querySelector(".hazard-bar.hazard-top");
         if (hazardTop) hazardTop.style.display = "none";
-        // startApp() never runs on this path, and applyLang() (which fills
-        // every [data-i18n] element) only runs inside it — so this one
-        // card's text needs filling directly, not left for applyLang().
-        houseNotFoundEl.querySelectorAll("[data-i18n]").forEach(function (el) {
-          var val = tr(el.getAttribute("data-i18n"));
-          if (val != null) el.textContent = val;
-        });
+        fillI18n(houseNotFoundEl);
         houseNotFoundEl.hidden = false;
       });
   }
