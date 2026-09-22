@@ -412,7 +412,10 @@
   .upcoming-row .up-rel { font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
   .upcoming-row .up-rel.tonight { color: var(--accent); font-weight: 600; }
   .upcoming-empty { font-size: 12px; color: var(--ink-faint); }
-  .rotation-list { display: flex; flex-direction: column; gap: 8px; }
+  /* Shows exactly 2 rows (row height 36px avatar + 20px padding = 56px,
+     plus one 8px gap between them); the rest scroll instead of pushing
+     the rest of the page down. */
+  .rotation-list { display: flex; flex-direction: column; gap: 8px; max-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
   .rotation-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; }
   .rotation-row .avatar { width: 36px; height: 36px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 13px; }
   .rotation-row.subscribed .avatar::after { content: ""; position: absolute; top: -2px; right: -2px; bottom: auto; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
