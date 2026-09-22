@@ -174,8 +174,13 @@
   .duty-row { display: flex; align-items: center; gap: 14px; }
   .avatar {
     width: 44px; height: 44px; border-radius: 50%; flex: none; border: 2px solid rgba(0,0,0,0.3);
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: center; justify-content: center; position: relative;
     font-family: 'Permanent Marker', cursive; font-weight: 400; font-size: 17px; color: #1a1a1a;
+  }
+  .roster-chip.subscribed .avatar::after {
+    content: ""; position: absolute; bottom: -1px; right: -1px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--surface-2);
   }
   .duty-name { font-size: 17px; font-weight: 700; }
   .duty-sub { font-size: 13px; color: var(--ink-soft); }

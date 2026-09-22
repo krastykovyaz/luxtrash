@@ -31,6 +31,7 @@
   ];
 
   var ROSTER = []; // loaded from /api/roster before first render
+  var subscribedNames = {}; // name -> true, refreshed by loadSubscribers()
   var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F", "#63C7A6", "#C77DBB"];
   var ANCHOR_MONDAY = new Date(2026, 8, 21);
 
@@ -233,11 +234,12 @@
     rosterStrip.innerHTML = "";
     ROSTER.forEach(function (name, idx) {
       var chip = document.createElement("span");
-      chip.className = "roster-chip";
+      chip.className = "roster-chip" + (subscribedNames[name] ? " subscribed" : "");
       var av = document.createElement("span");
       av.className = "avatar";
       av.style.background = AVATAR_COLORS[idx % AVATAR_COLORS.length];
       av.textContent = initials(name);
+      if (subscribedNames[name]) av.title = tr("subscribedBadge");
       chip.appendChild(av);
       chip.appendChild(document.createTextNode(name));
       var removeBtn = document.createElement("button");
@@ -762,7 +764,12 @@
   function loadSubscribers() {
     fetch("/api/subscribe")
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-      .then(renderNotifyList)
+      .then(function (rows) {
+        renderNotifyList(rows);
+        subscribedNames = {};
+        rows.forEach(function (row) { subscribedNames[row.name] = true; });
+        renderDuty(); // re-draw the roster chips with the subscribed badge
+      })
       .catch(function () {});
   }
 
