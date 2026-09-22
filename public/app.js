@@ -75,10 +75,6 @@
     var day = (d.getDay() + 6) % 7;
     return new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
   }
-  function weekKeyOf(d) {
-    var m = mondayOf(d);
-    return m.getFullYear() + "-" + pad(m.getMonth() + 1) + "-" + pad(m.getDate());
-  }
   function fmtShort(d) {
     return tr("weekdays")[(d.getDay() + 6) % 7];
   }
@@ -157,10 +153,12 @@
     renderGuide();
     renderLegend();
     renderCalendar();
-    renderClaimSelect();
+    renderTaskForm();
+    renderTask(currentTask);
     renderNotifyForm();
     gameShowItem();
-    renderLeaderboard(lastClaims);
+    loadLeaderboard();
+    loadSubscribers();
   }
 
   function renderBadges(container, codes) {
@@ -251,9 +249,10 @@
     ROSTER = newRoster;
     recomputeWeek();
     renderDuty();
-    renderClaimSelect();
+    renderTaskForm();
     renderNotifyForm();
-    loadClaims();
+    loadTask();
+    loadLeaderboard();
   }
 
   function addToRoster() {
@@ -512,64 +511,103 @@
     });
   }
 
-  // ---- scrap rewards (backend-backed leaderboard) ----
-  var claimSelect = document.getElementById("claimSelect");
-  var claimBtn = document.getElementById("claimBtn");
+  // ---- bin duty task: two-step out/back confirmation + leaderboard ----
+  var taskDateLabel = document.getElementById("taskDateLabel");
+  var taskBadges = document.getElementById("taskBadges");
   var claimStatus = document.getElementById("claimStatus");
+  var outRow = document.getElementById("outRow");
+  var backRow = document.getElementById("backRow");
+  var outNameSelect = document.getElementById("outNameSelect");
+  var backNameSelect = document.getElementById("backNameSelect");
+  var outBtn = document.getElementById("outBtn");
+  var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
-  var thisWeekKey = weekKeyOf(today);
-  var lastClaims = [];
+  var currentTask = null;
 
-  function renderClaimSelect() {
-    var current = claimSelect.value;
-    claimSelect.innerHTML = "";
+  function fillNameSelect(select, preferredName) {
+    var current = select.value;
+    select.innerHTML = "";
     ROSTER.forEach(function (name) {
       var opt = document.createElement("option");
       opt.value = name;
       opt.textContent = name;
-      claimSelect.appendChild(opt);
+      select.appendChild(opt);
     });
-    claimSelect.value = current && ROSTER.includes(current) ? current : thisWeek.name;
+    var fallback = preferredName && ROSTER.includes(preferredName) ? preferredName : ROSTER[0];
+    select.value = current && ROSTER.includes(current) ? current : fallback;
   }
 
-  function renderLeaderboard(claims) {
-    lastClaims = claims || [];
-    var tally = {};
-    ROSTER.forEach(function (n) { tally[n] = 0; });
-    lastClaims.forEach(function (c) { if (tally[c.name] != null) tally[c.name] += Number(c.coins) || 0; });
-    var ranked = ROSTER.slice().sort(function (a, b) { return tally[b] - tally[a]; });
-
-    leaderboardEl.innerHTML = "";
-    ranked.forEach(function (name, i) {
-      var idx = ROSTER.indexOf(name);
-      var row = document.createElement("div");
-      row.className = "lb-row";
-      var av = document.createElement("span");
-      av.className = "avatar lb-avatar";
-      av.style.background = AVATAR_COLORS[idx % AVATAR_COLORS.length];
-      av.textContent = initials(name);
-      row.innerHTML = '<span class="lb-rank">' + (i + 1) + '</span>';
-      row.appendChild(av);
-      var nameSpan = document.createElement("span");
-      nameSpan.className = "lb-name";
-      nameSpan.textContent = name;
-      row.appendChild(nameSpan);
-      var coinSpan = document.createElement("span");
-      coinSpan.className = "lb-coins";
-      coinSpan.textContent = tally[name] + " SCRAP";
-      row.appendChild(coinSpan);
-      leaderboardEl.appendChild(row);
-    });
-
-    var claimedByThisWeek = lastClaims.find(function (c) { return c.week_key === thisWeekKey; });
-    claimStatus.textContent = claimedByThisWeek ? fmt("claimAlready", { name: claimedByThisWeek.name }) : tr("claimNone");
+  function renderTaskForm() {
+    fillNameSelect(outNameSelect, thisWeek.name);
+    fillNameSelect(backNameSelect, currentTask && currentTask.out_by);
   }
 
-  function loadClaims() {
-    return fetch("/api/claims")
+  function renderTask(task) {
+    currentTask = task;
+    if (!task) {
+      taskDateLabel.textContent = "";
+      taskBadges.innerHTML = "";
+      outRow.hidden = true;
+      backRow.hidden = true;
+      claimStatus.textContent = tr("taskNothing");
+      return;
+    }
+
+    var date = new Date(task.date_key + "T00:00:00");
+    taskDateLabel.textContent = fmtLong(date);
+    renderBadges(taskBadges, task.codes);
+
+    if (!task.out_at) {
+      outRow.hidden = false;
+      backRow.hidden = true;
+      claimStatus.textContent = tr("outPending");
+    } else {
+      outRow.hidden = true;
+      backRow.hidden = false;
+      fillNameSelect(backNameSelect, task.out_by);
+      claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
+    }
+  }
+
+  function loadTask() {
+    return fetch("/api/tasks/current")
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-      .then(function (data) { renderLeaderboard(data); })
-      .catch(function () { claimStatus.textContent = tr("claimFailed"); });
+      .then(renderTask)
+      .catch(function () { claimStatus.textContent = tr("taskFailed"); });
+  }
+
+  function loadLeaderboard() {
+    return fetch("/api/tasks/leaderboard")
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (rows) {
+        var tally = {};
+        ROSTER.forEach(function (n) { tally[n] = 0; });
+        rows.forEach(function (row) { if (tally[row.name] != null) tally[row.name] = Number(row.coins) || 0; });
+        var ranked = ROSTER.slice().sort(function (a, b) { return tally[b] - tally[a]; });
+
+        leaderboardEl.innerHTML = "";
+        ranked.forEach(function (name, i) {
+          var idx = ROSTER.indexOf(name);
+          var row = document.createElement("div");
+          row.className = "lb-row";
+          var av = document.createElement("span");
+          av.className = "avatar lb-avatar";
+          av.style.background = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+          av.textContent = initials(name);
+          row.innerHTML = '<span class="lb-rank">' + (i + 1) + '</span>';
+          row.appendChild(av);
+          var nameSpan = document.createElement("span");
+          nameSpan.className = "lb-name";
+          nameSpan.textContent = name;
+          row.appendChild(nameSpan);
+          var coinSpan = document.createElement("span");
+          coinSpan.className = "lb-coins";
+          coinSpan.textContent = tally[name] + " SCRAP";
+          row.appendChild(coinSpan);
+          leaderboardEl.appendChild(row);
+        });
+      })
+      .catch(function () {});
   }
 
   function celebrate(name, coins) {
@@ -610,28 +648,49 @@
     }
   }
 
-  claimBtn.addEventListener("click", function () {
-    claimBtn.disabled = true;
-    claimStatus.textContent = tr("claimLogging");
-    fetch("/api/claims", {
+  outBtn.addEventListener("click", function () {
+    if (!currentTask) return;
+    outBtn.disabled = true;
+    claimStatus.textContent = tr("outLogging");
+    fetch("/api/tasks/" + currentTask.date_key + "/out", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: claimSelect.value })
+      body: JSON.stringify({ name: outNameSelect.value })
     })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
-      .then(function (result) {
-        celebrate(result.name, result.coins);
-        return loadClaims();
-      })
-      .catch(function () { claimStatus.textContent = tr("claimFailed"); })
-      .finally(function () { claimBtn.disabled = false; });
+      .then(renderTask)
+      .catch(function () { claimStatus.textContent = tr("taskFailed"); })
+      .finally(function () { outBtn.disabled = false; });
   });
 
-  claimStatus.textContent = tr("claimChecking");
-  loadClaims();
+  backBtn.addEventListener("click", function () {
+    if (!currentTask) return;
+    backBtn.disabled = true;
+    claimStatus.textContent = tr("backLogging");
+    fetch("/api/tasks/" + currentTask.date_key + "/back", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: backNameSelect.value })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function (task) {
+        celebrate(task.out_by, task.coins);
+        loadLeaderboard();
+        return loadTask();
+      })
+      .catch(function () { claimStatus.textContent = tr("taskFailed"); })
+      .finally(function () { backBtn.disabled = false; });
+  });
+
+  claimStatus.textContent = tr("taskLoading");
+  loadTask();
+  loadLeaderboard();
 
   // ---- email notification subscriptions ----
   var notifyNameSelect = document.getElementById("notifyNameSelect");
@@ -679,17 +738,12 @@
     note.textContent = tr("subscribedListNote");
     notifyList.appendChild(note);
     rows.forEach(function (row) {
-      var langMeta = window.LANGS.find(function (l) { return l.code === row.language; });
       var line = document.createElement("div");
       line.className = "lb-row";
       var nameSpan = document.createElement("span");
       nameSpan.className = "lb-name";
       nameSpan.textContent = row.name;
-      var langSpan = document.createElement("span");
-      langSpan.className = "lb-coins";
-      langSpan.textContent = langMeta ? langMeta.name : row.language;
       line.appendChild(nameSpan);
-      line.appendChild(langSpan);
       notifyList.appendChild(line);
     });
   }
@@ -740,8 +794,6 @@
       .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
       .finally(function () { unsubBtn.disabled = false; });
   });
-
-  loadSubscribers();
 
   // ---- camera check (backend-backed, Gemini) ----
   (function () {

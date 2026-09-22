@@ -6,11 +6,10 @@ const multer = require("multer");
 const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
-const { weekKeyOf } = require("./rotation");
 const { sendWeeklyReminders } = require("./mailer");
 const { LANGS } = require("./i18n");
+const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
 
-const COINS_PER_CLAIM = 10;
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -74,24 +73,31 @@ app.delete("/api/roster/:name", (req, res) => {
   res.json(currentRoster());
 });
 
-// --- Scrap leaderboard ---
-app.get("/api/claims", (req, res) => {
-  const rows = db.prepare("SELECT week_key, name, coins, claimed_at FROM claims").all();
-  res.json(rows);
+// --- Bin duty tasks: two-step out/back confirmation ---
+app.get("/api/tasks/current", (req, res) => {
+  res.json(getCurrentTask(db, new Date()));
 });
 
-app.post("/api/claims", (req, res) => {
+app.post("/api/tasks/:dateKey/out", (req, res) => {
   const name = req.body && req.body.name;
-  if (!name || !currentRoster().includes(name)) {
-    return res.status(400).json({ error: "Unknown roster name." });
+  try {
+    res.json(confirmOut(db, req.params.dateKey, currentRoster(), name));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
-  const weekKey = weekKeyOf(new Date());
-  const claimedAt = new Date().toISOString();
-  db.prepare(
-    "INSERT INTO claims (week_key, name, coins, claimed_at) VALUES (?, ?, ?, ?) " +
-    "ON CONFLICT(week_key) DO UPDATE SET name = excluded.name, coins = excluded.coins, claimed_at = excluded.claimed_at"
-  ).run(weekKey, name, COINS_PER_CLAIM, claimedAt);
-  res.json({ weekKey, name, coins: COINS_PER_CLAIM, claimedAt });
+});
+
+app.post("/api/tasks/:dateKey/back", (req, res) => {
+  const name = req.body && req.body.name;
+  try {
+    res.json(confirmBack(db, req.params.dateKey, currentRoster(), name));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get("/api/tasks/leaderboard", (req, res) => {
+  res.json(getLeaderboard(db));
 });
 
 // --- Notification subscriptions ---

@@ -199,6 +199,7 @@
 
   /* ---- rewards ---- */
   .rewards-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .task-info { display: flex; flex-direction: column; gap: 8px; }
   .claim-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .claim-select {
     font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; color: var(--ink);
@@ -385,11 +386,19 @@
       <div class="section-note" data-i18n="rewardsNote"></div>
     </div>
     <div class="rewards-card poster poster-b" id="rewardsCard">
-      <div class="claim-row">
-        <select class="claim-select" id="claimSelect"></select>
-        <button class="stamp-btn" id="claimBtn" type="button" data-i18n="claimBtn"></button>
+      <div class="task-info" id="taskInfo">
+        <div class="eyebrow" id="taskDateLabel"></div>
+        <div class="badge-row" id="taskBadges"></div>
       </div>
       <div class="claim-status" id="claimStatus"></div>
+      <div class="claim-row" id="outRow" hidden>
+        <select class="claim-select" id="outNameSelect"></select>
+        <button class="stamp-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
+      </div>
+      <div class="claim-row" id="backRow" hidden>
+        <select class="claim-select" id="backNameSelect"></select>
+        <button class="stamp-btn" id="backBtn" type="button" data-i18n="confirmBackBtn"></button>
+      </div>
       <div class="leaderboard" id="leaderboard"></div>
     </div>
   </section>

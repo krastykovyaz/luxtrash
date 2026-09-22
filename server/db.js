@@ -9,11 +9,14 @@ const db = new Database(path.join(DATA_DIR, "bin-duty.sqlite"));
 db.pragma("journal_mode = WAL");
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS claims (
-    week_key TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    coins INTEGER NOT NULL,
-    claimed_at TEXT NOT NULL
+  CREATE TABLE IF NOT EXISTS tasks (
+    date_key TEXT PRIMARY KEY,
+    codes TEXT NOT NULL,
+    out_by TEXT,
+    out_at TEXT,
+    back_by TEXT,
+    back_at TEXT,
+    coins INTEGER NOT NULL DEFAULT 10
   )
 `);
 

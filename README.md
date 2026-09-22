@@ -1,9 +1,9 @@
 # Bin Duty
 
 Household waste-sorting app for the house: what goes out tonight, whose turn it is,
-a sorting quiz, a camera-based bin checker, a Scrap-coin leaderboard for who
-actually took the bins out, and weekly email reminders in each person's own
-language.
+a sorting quiz, a camera-based bin checker, weekly email reminders in each person's
+own language, and a two-step bin-duty task (confirm it's out, confirm it's back)
+that pays out Scrap coins only once both are done.
 
 Runs as a small Node/Express server (`server/`) serving a static frontend
 (`public/`), backed by SQLite for the leaderboard/roster/subscriptions, Google
@@ -48,6 +48,23 @@ yourself, never in chat. Any SMTP provider works:
 Leave the SMTP vars empty and everything else still works — registering just
 won't actually send mail (the server logs a warning once and no-ops).
 
+## Bin duty tasks (out / back / Scrap)
+
+A task exists for every real collection date in the schedule, and becomes
+actionable the evening before that date — "a day before expiration," i.e. exactly
+when the house is supposed to start thinking about it. Two steps, both required:
+
+1. **Confirm bin is out** — whoever took it to the curb picks their name and
+   confirms. The task now shows as in progress.
+2. **Confirm bin is back** — once the empty bin is back home, confirm again (same
+   or different person). Only now is the task complete, and Scrap is paid to
+   whoever did step 1.
+
+If a bin gets confirmed out but nobody ever confirms it back, that task stays the
+one shown — however old — until it's closed, instead of getting buried by newer
+dates. A date that was never even started just quietly drops off once its day has
+passed; there's nothing left to confirm about a bin nobody logged.
+
 ## Docker
 
 ```bash
@@ -76,13 +93,14 @@ leaderboard survives container restarts/rebuilds.
 
 ```
 server/
-  index.js     Express app: /api/check (Gemini), /api/claims, /api/roster,
-               /api/subscribe, plus the weekly cron trigger
+  index.js     Express app: /api/check (Gemini), /api/tasks/* (out/back/leaderboard),
+               /api/roster, /api/subscribe, plus the weekly cron trigger
   gemini.js    Gemini vision call for the camera bin-checker
   mailer.js    Builds and sends the weekly reminder email (SMTP via nodemailer)
-  rotation.js  Collection schedule + duty-rotation math, shared by claims and mail
+  rotation.js  Collection schedule + duty-rotation math, shared by tasks and mail
+  tasks.js     Two-step out/back task logic and the Scrap leaderboard query
   i18n.js      Loads public/i18n.js server-side so email wording matches the app
-  db.js        SQLite setup (claims, roster, accounts tables)
+  db.js        SQLite setup (tasks, roster, accounts tables)
 public/
   index.html   Page structure
   i18n.js      Language data — all 12 languages (English, Spanish, French,
