@@ -37,6 +37,53 @@
   var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F", "#63C7A6", "#C77DBB"];
   var ANCHOR_MONDAY = new Date(2026, 8, 21);
 
+  // ---- which house — a plain URL param (?h=slug), never a login. The
+  // original house (this app's very first one) has no param at all, so
+  // every link and bookmark that predates multi-house keeps working
+  // unchanged. api() appends it to every request; a bare "" means "the
+  // original house" both here and on the server. ----
+  var HOUSE_SLUG = "";
+  try {
+    HOUSE_SLUG = new URLSearchParams(location.search).get("h") || "";
+  } catch (e) {}
+  function api(path) {
+    if (!HOUSE_SLUG) return path;
+    var sep = path.indexOf("?") === -1 ? "?" : "&";
+    return path + sep + "h=" + encodeURIComponent(HOUSE_SLUG);
+  }
+  // The houses this device has built or joined — shown on the You tab, each
+  // with its own shareable link. Purely local, like everything else here:
+  // nothing about "which houses you're in" lives on any server.
+  var MY_HOUSES = [];
+  (function initMyHouses() {
+    try {
+      var saved = JSON.parse(localStorage.getItem("binDutyMyHouses") || "[]");
+      if (Array.isArray(saved)) MY_HOUSES = saved;
+    } catch (e) {}
+  })();
+  function rememberHouse(slug, name) {
+    // slug === "" is the original house, a legitimate value here — not
+    // "nothing to remember" — so this only guards against a truly missing
+    // argument (undefined/null), never against the empty string.
+    if (slug == null) return;
+    MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
+    MY_HOUSES.unshift({ slug: slug, name: name || slug });
+    try { localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES)); } catch (e) {}
+  }
+  function houseLink(slug) {
+    var url = new URL(location.href);
+    url.search = slug ? "?h=" + encodeURIComponent(slug) : "";
+    url.hash = "";
+    return url.toString();
+  }
+  // Per-person state (who you are, your best streak) is scoped per house —
+  // the original house keeps its unprefixed key untouched, so nothing about
+  // existing data changes; every other house gets its own namespaced key so
+  // switching houses never leaks or prefills the wrong identity.
+  function houseKey(base) {
+    return HOUSE_SLUG ? base + ":" + HOUSE_SLUG : base;
+  }
+
   // ---- "who am I" — a local-only preference, not an account. There is no
   // login anywhere in this app; this is exactly the same kind of choice as
   // the language picker (stored in this browser, nothing sent anywhere
@@ -45,15 +92,15 @@
   var ME = "";
   (function initMe() {
     try {
-      var saved = localStorage.getItem("binDutyMe");
+      var saved = localStorage.getItem(houseKey("binDutyMe"));
       if (saved) ME = saved;
     } catch (e) {}
   })();
   function setMe(name) {
     ME = name || "";
     try {
-      if (ME) localStorage.setItem("binDutyMe", ME);
-      else localStorage.removeItem("binDutyMe");
+      if (ME) localStorage.setItem(houseKey("binDutyMe"), ME);
+      else localStorage.removeItem(houseKey("binDutyMe"));
     } catch (e) {}
   }
 
@@ -251,6 +298,7 @@
     renderTaskForm();
     renderTask(currentTask);
     renderNotifyForm();
+    renderHousesList();
     gameShowItem();
     loadLeaderboard();
     loadSubscribers();
@@ -560,7 +608,7 @@
   var addNameBtn = document.getElementById("addNameBtn");
 
   function loadRosterFull() {
-    return fetch("/api/roster/full")
+    return fetch(api("/api/roster/full"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         ROSTER_OCCUPATION = {};
@@ -592,7 +640,7 @@
     var name = addNameInput.value.trim();
     if (!name) return;
     addNameBtn.disabled = true;
-    fetch("/api/roster", {
+    fetch(api("/api/roster"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: name })
@@ -611,7 +659,7 @@
   }
 
   function removeFromRoster(name) {
-    fetch("/api/roster/" + encodeURIComponent(name), { method: "DELETE" })
+    fetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -641,7 +689,7 @@
   var gQueue = [], gIndex = 0, gScoreVal = 0, gStreakVal = 0, gBestVal = 0, gAnswered = false, gRoundReported = false;
   var gButtonsByCode = {};
 
-  try { gBestVal = parseInt(localStorage.getItem("binDutyBestStreak") || "0", 10) || 0; } catch (e) { gBestVal = 0; }
+  try { gBestVal = parseInt(localStorage.getItem(houseKey("binDutyBestStreak")) || "0", 10) || 0; } catch (e) { gBestVal = 0; }
   gBest.textContent = gBestVal;
 
   function shuffle(arr) {
@@ -690,7 +738,7 @@
       gFeedbackEl.textContent = gScoreVal === gQueue.length ? tr("perfectRound") : tr("solidRound");
       if (gScoreVal === gQueue.length && ME && !gRoundReported) {
         gRoundReported = true;
-        fetch("/api/quiz/complete", {
+        fetch(api("/api/quiz/complete"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: ME, correct: gScoreVal, total: gQueue.length })
@@ -723,7 +771,7 @@
       gScoreVal++; gStreakVal++;
       if (gStreakVal > gBestVal) {
         gBestVal = gStreakVal; gBest.textContent = gBestVal;
-        try { localStorage.setItem("binDutyBestStreak", String(gBestVal)); } catch (e) {}
+        try { localStorage.setItem(houseKey("binDutyBestStreak"), String(gBestVal)); } catch (e) {}
         if (statStreak) statStreak.textContent = gBestVal;
       }
       btn.classList.add("pick-correct");
@@ -993,14 +1041,14 @@
   }
 
   function loadTask() {
-    return fetch("/api/tasks/current")
+    return fetch(api("/api/tasks/current"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(renderTask)
       .catch(function () { claimStatus.textContent = tr("taskFailed"); });
   }
 
   function loadLeaderboard() {
-    return fetch("/api/tasks/leaderboard")
+    return fetch(api("/api/tasks/leaderboard"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         var tally = {};
@@ -1080,7 +1128,7 @@
     if (!currentTask) return;
     outBtn.disabled = true;
     claimStatus.textContent = tr("outLogging");
-    fetch("/api/tasks/" + currentTask.date_key + "/out", {
+    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: outNameSelect.value })
@@ -1098,7 +1146,7 @@
     if (!currentTask) return;
     backBtn.disabled = true;
     claimStatus.textContent = tr("backLogging");
-    fetch("/api/tasks/" + currentTask.date_key + "/back", {
+    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: backNameSelect.value })
@@ -1153,7 +1201,7 @@
 
   // Who's subscribed (names only) — drives the dot on roster avatars.
   function loadSubscribers() {
-    fetch("/api/subscribe")
+    fetch(api("/api/subscribe"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         subscribedNames = {};
@@ -1176,7 +1224,7 @@
       subscribeForm.hidden = false;
       return;
     }
-    fetch("/api/subscribe/status/" + encodeURIComponent(ME))
+    fetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (s) {
         subscribedState.hidden = !s.subscribed;
@@ -1194,7 +1242,7 @@
     if (!ME) { renderNotifyForm(); return; }
     notifySubscribeBtn.disabled = true;
     notifyStatus.textContent = tr("notifySubscribing");
-    fetch("/api/subscribe", {
+    fetch(api("/api/subscribe"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1218,7 +1266,7 @@
   unsubBtn.addEventListener("click", function () {
     if (!ME) return;
     unsubBtn.disabled = true;
-    fetch("/api/subscribe/by-name/" + encodeURIComponent(ME), { method: "DELETE" })
+    fetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
       .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
       .then(function () {
         notifyStatus.textContent = tr("unsubDone");
@@ -1227,6 +1275,159 @@
       })
       .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
       .finally(function () { unsubBtn.disabled = false; });
+  });
+
+  // ---- houses: build one, join one with a code/link, list the ones this
+  // device has been to. Same philosophy as everything else here — no
+  // accounts, nothing server-side tracks "your" houses, it's purely what's
+  // saved in this browser (MY_HOUSES / rememberHouse, defined up top). ----
+  var housesListEl = document.getElementById("housesList");
+  var buildHouseToggleBtn = document.getElementById("buildHouseToggleBtn");
+  var joinHouseToggleBtn = document.getElementById("joinHouseToggleBtn");
+  var buildHouseForm = document.getElementById("buildHouseForm");
+  var joinHouseForm = document.getElementById("joinHouseForm");
+  var buildHouseName = document.getElementById("buildHouseName");
+  var buildHouseCity = document.getElementById("buildHouseCity");
+  var buildHouseSubmitBtn = document.getElementById("buildHouseSubmitBtn");
+  var buildHouseStatus = document.getElementById("buildHouseStatus");
+  var joinHouseInput = document.getElementById("joinHouseInput");
+  var joinHouseSubmitBtn = document.getElementById("joinHouseSubmitBtn");
+  var joinHouseStatus = document.getElementById("joinHouseStatus");
+
+  function renderHousesList() {
+    housesListEl.innerHTML = "";
+    if (!MY_HOUSES.length) {
+      var empty = document.createElement("div");
+      empty.className = "houses-empty";
+      empty.textContent = tr("housesEmpty");
+      housesListEl.appendChild(empty);
+      return;
+    }
+    MY_HOUSES.forEach(function (h) {
+      var row = document.createElement("div");
+      row.className = "house-row" + (h.slug === HOUSE_SLUG ? " current" : "");
+
+      var icon = document.createElement("div");
+      icon.className = "house-row-icon";
+      icon.textContent = "\u{1F3E0}";
+      row.appendChild(icon);
+
+      var text = document.createElement("div");
+      text.className = "house-row-text";
+      var name = document.createElement("div");
+      name.className = "house-row-name";
+      name.textContent = h.name;
+      text.appendChild(name);
+      var sub = document.createElement("div");
+      sub.className = "house-row-sub";
+      sub.textContent = h.slug === HOUSE_SLUG ? tr("housesCurrentTag") : tr("housesSwitchHint");
+      text.appendChild(sub);
+      row.appendChild(text);
+
+      var copyBtn = document.createElement("button");
+      copyBtn.className = "house-row-copy";
+      copyBtn.type = "button";
+      copyBtn.textContent = tr("housesCopyLink");
+      copyBtn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var link = houseLink(h.slug);
+        var mark = function () {
+          copyBtn.textContent = tr("housesCopied");
+          copyBtn.classList.add("copied");
+          setTimeout(function () {
+            copyBtn.textContent = tr("housesCopyLink");
+            copyBtn.classList.remove("copied");
+          }, 1800);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(mark).catch(function () { window.prompt(tr("housesCopyManual"), link); });
+        } else {
+          window.prompt(tr("housesCopyManual"), link);
+        }
+      });
+      row.appendChild(copyBtn);
+
+      if (h.slug !== HOUSE_SLUG) {
+        row.style.cursor = "pointer";
+        row.addEventListener("click", function () { location.href = houseLink(h.slug); });
+      }
+
+      housesListEl.appendChild(row);
+    });
+  }
+
+  function closeHouseForms() {
+    buildHouseForm.hidden = true;
+    joinHouseForm.hidden = true;
+    buildHouseStatus.textContent = "";
+    joinHouseStatus.textContent = "";
+  }
+
+  buildHouseToggleBtn.addEventListener("click", function () {
+    var opening = buildHouseForm.hidden;
+    closeHouseForms();
+    buildHouseForm.hidden = !opening;
+    if (opening) buildHouseName.focus();
+  });
+  joinHouseToggleBtn.addEventListener("click", function () {
+    var opening = joinHouseForm.hidden;
+    closeHouseForms();
+    joinHouseForm.hidden = !opening;
+    if (opening) joinHouseInput.focus();
+  });
+
+  buildHouseSubmitBtn.addEventListener("click", function () {
+    var name = buildHouseName.value.trim();
+    if (!name) { buildHouseStatus.textContent = tr("buildHouseNameRequired"); return; }
+    buildHouseSubmitBtn.disabled = true;
+    buildHouseStatus.textContent = tr("buildHouseBuilding");
+    fetch("/api/houses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: name, city: buildHouseCity.value.trim(), language: currentLang })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function (house) {
+        rememberHouse(house.slug, house.name);
+        location.href = houseLink(house.slug);
+      })
+      .catch(function (e) {
+        buildHouseStatus.textContent = e.message || tr("buildHouseFailed");
+        buildHouseSubmitBtn.disabled = false;
+      });
+  });
+
+  joinHouseSubmitBtn.addEventListener("click", function () {
+    // A slug and the human-facing "code" are the same string — see
+    // houses.js — so whatever someone pastes (a bare code or a full
+    // ?h=... link) just needs the slug picked out of it.
+    var raw = joinHouseInput.value.trim();
+    var slug = raw;
+    try {
+      if (/^https?:\/\//i.test(raw)) {
+        slug = new URL(raw).searchParams.get("h") || raw;
+      }
+    } catch (e) {}
+    slug = slug.toLowerCase().replace(/\s+/g, "");
+    if (!slug) { joinHouseStatus.textContent = tr("joinHouseEmpty"); return; }
+    joinHouseSubmitBtn.disabled = true;
+    joinHouseStatus.textContent = tr("joinHouseChecking");
+    fetch("/api/houses/" + encodeURIComponent(slug))
+      .then(function (r) {
+        if (!r.ok) throw new Error(tr("joinHouseNotFound"));
+        return r.json();
+      })
+      .then(function (house) {
+        rememberHouse(house.slug, house.name);
+        location.href = houseLink(house.slug);
+      })
+      .catch(function (e) {
+        joinHouseStatus.textContent = e.message || tr("joinHouseNotFound");
+        joinHouseSubmitBtn.disabled = false;
+      });
   });
 
   // ---- "You": who am I, my occupation, my achievements ----
@@ -1328,7 +1529,7 @@
   occupationSaveBtn.addEventListener("click", function () {
     if (!ME) return;
     occupationSaveBtn.disabled = true;
-    fetch("/api/roster/" + encodeURIComponent(ME), {
+    fetch(api("/api/roster/" + encodeURIComponent(ME)), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ occupation: occupationInput.value.trim() })
@@ -1383,7 +1584,7 @@
     }
     achvUnlockedMsg.textContent = "";
     homeCoinsAvatar.classList.add("on");
-    fetch("/api/coins/" + encodeURIComponent(ME))
+    fetch(api("/api/coins/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         renderAchievements(data.achievements);
@@ -1449,7 +1650,7 @@
     }
     donateBtn.disabled = true;
     donateStatus.textContent = tr("donateSending");
-    fetch("/api/coins/donate", {
+    fetch(api("/api/coins/donate"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from: ME, to: donateToSelect.value, amount: amount })
@@ -1496,7 +1697,7 @@
     // No live task → the row is hidden, nothing to fetch (renderTask calls
     // this again once a task is shown).
     if (!currentTask) return;
-    fetch("/api/reactions/" + reactionDateKey())
+    fetch(api("/api/reactions/" + reactionDateKey()))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         var mine = null;
@@ -1518,7 +1719,7 @@
         reactionHintEl.textContent = tr("reactionHint");
         return;
       }
-      fetch("/api/reactions/" + reactionDateKey(), {
+      fetch(api("/api/reactions/" + reactionDateKey()), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: ME, emoji: emoji })
@@ -1643,7 +1844,7 @@
         if (!addr) return;
         emailBtn.disabled = true;
         emailStatus.textContent = tr("scanEmailSending");
-        fetch("/api/check/email", {
+        fetch(api("/api/check/email"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
@@ -1684,7 +1885,7 @@
       formData.append("photo", file);
       if (ME) formData.append("name", ME);
 
-      fetch("/api/check", { method: "POST", body: formData })
+      fetch(api("/api/check"), { method: "POST", body: formData })
         .then(function (r) {
           if (r.status === 413) throw { code: "TOO_LARGE" };
           if (!r.ok) {
@@ -1715,25 +1916,65 @@
   })();
 
   // ---- bootstrap: load the roster + schedule, then render everything that depends on them ----
-  var scheduleLoadFailed = false;
-  Promise.all([
-    fetch("/api/roster").then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
-    fetch("/api/schedule")
-      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-      .catch(function () { scheduleLoadFailed = true; return {}; })
-  ])
-    .then(function (results) {
-      ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
-      SCHEDULE = results[1];
-      recomputeWeek();
-      if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
-      applyLang();
-      loadRosterFull();
-    })
-    .catch(function () {
-      ROSTER = ["Housemate"];
-      recomputeWeek();
-      rosterMsg.textContent = "Couldn't load the housemate list from the server.";
-      applyLang();
-    });
+  function startApp() {
+    var scheduleLoadFailed = false;
+    Promise.all([
+      fetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
+      fetch(api("/api/schedule"))
+        .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .catch(function () { scheduleLoadFailed = true; return {}; })
+    ])
+      .then(function (results) {
+        ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
+        SCHEDULE = results[1];
+        recomputeWeek();
+        if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
+        applyLang();
+        loadRosterFull();
+      })
+      .catch(function () {
+        ROSTER = ["Housemate"];
+        recomputeWeek();
+        rosterMsg.textContent = "Couldn't load the housemate list from the server.";
+        applyLang();
+      });
+  }
+
+  // A house link (?h=slug) has to actually exist before the rest of the app
+  // tries to use it — an old/mistyped/deleted-house link shows a plain
+  // "this house doesn't exist" page instead of a broken, empty app. The
+  // original house (no ?h=) skips this lookup entirely.
+  var houseNotFoundEl = document.getElementById("houseNotFound");
+  var houseNotFoundHomeLink = document.getElementById("houseNotFoundHomeLink");
+  if (houseNotFoundHomeLink) houseNotFoundHomeLink.href = location.pathname;
+
+  if (!HOUSE_SLUG) {
+    rememberHouse("", "Bin Duty");
+    startApp();
+  } else {
+    fetch("/api/houses/" + encodeURIComponent(HOUSE_SLUG))
+      .then(function (r) { if (!r.ok) throw new Error("not found"); return r.json(); })
+      .then(function (house) {
+        rememberHouse(house.slug, house.name);
+        document.title = house.name + " · Bin Duty";
+        startApp();
+      })
+      .catch(function () {
+        // Not [hidden] — #app carries a class (.wrap) that sets its own
+        // display, same specificity as the [hidden] UA rule, so the
+        // attribute alone wouldn't actually hide it.
+        var appEl = document.getElementById("app");
+        if (appEl) appEl.style.display = "none";
+        var hazardTop = document.querySelector(".hazard-bar.hazard-top");
+        if (hazardTop) hazardTop.style.display = "none";
+        // startApp() never runs on this path, and applyLang() (which fills
+        // every [data-i18n] element) only runs inside it — so this one
+        // card's text needs filling directly, not left for applyLang().
+        houseNotFoundEl.querySelectorAll("[data-i18n]").forEach(function (el) {
+          var val = tr(el.getAttribute("data-i18n"));
+          if (val != null) el.textContent = val;
+        });
+        houseNotFoundEl.hidden = false;
+      });
+  }
 })();

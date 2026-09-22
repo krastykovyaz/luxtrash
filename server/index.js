@@ -15,20 +15,27 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const cron = require("node-cron");
-const db = require("./db");
+const { getDb, DEFAULT_SLUG } = require("./db");
+const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
-const { SCHEDULE } = require("./rotation");
+const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
+
+// The original house's db, resolved once at startup — used unchanged by the
+// background cron jobs at the bottom of this file (see the "Still open"
+// note in the house-building mockup: scheduled digest emails stay scoped
+// to this one house for now; interactive email actions work per-house).
+const defaultDb = getDb(DEFAULT_SLUG);
 
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UNSAFE_NAME_CHARS = /[<>&"'`\x00-\x1F]/;
 
-function currentRoster() {
+function currentRoster(db) {
   // Alphabetical (case-insensitive), not insertion order — so "one
   // house-mate a week, alphabetically" (what the UI actually says) stays
   // true no matter when someone was added to or removed from the roster.
@@ -37,8 +44,20 @@ function currentRoster() {
 
 // Same order, with occupation — a separate route/shape from GET /api/roster
 // so nothing that already expects a plain array of names breaks.
-function currentRosterFull() {
+function currentRosterFull(db) {
   return db.prepare("SELECT name, occupation, created_at FROM roster ORDER BY name COLLATE NOCASE ASC").all();
+}
+
+// A custom house's schedule lives in its own `schedule` table (starts
+// empty — see the "no collection dates yet" state in the app); the
+// original house keeps using the hardcoded, real Luxembourg calendar in
+// rotation.js, exactly as before multi-house existed.
+function flatScheduleFor(house) {
+  if (house.slug === DEFAULT_SLUG) return DEFAULT_FLAT_SCHEDULE;
+  const rows = house.db.prepare("SELECT date_key, codes FROM schedule").all();
+  const flat = {};
+  rows.forEach((r) => { flat[r.date_key] = r.codes; });
+  return flat;
 }
 
 const app = express();
@@ -51,11 +70,60 @@ app.use(express.json());
 const checkLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 const writeLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 const mailLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+const buildLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }
 });
+
+// --- House resolution: every /api request (except building/looking up a
+// house) carries its house as ?h=<slug>. No slug, or the reserved default
+// slug, means the original house — so every link, bookmark and API call
+// that predates multi-house keeps working exactly as it did before. An
+// unknown slug is a 404, not a silent fall-back to someone else's house. ---
+function resolveHouse(req, res, next) {
+  const raw = typeof req.query.h === "string" ? req.query.h.trim().toLowerCase() : "";
+  if (!raw || raw === DEFAULT_SLUG) {
+    req.house = { slug: DEFAULT_SLUG, db: defaultDb, name: "Bin Duty", city: null };
+    return next();
+  }
+  const row = houses.getHouse(raw);
+  if (!row) {
+    return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
+  }
+  req.house = { slug: row.slug, db: getDb(row.slug), name: row.name, city: row.city, language: row.language };
+  next();
+}
+
+// --- Build / look up a house (unscoped — these resolve which house to use,
+// so they run before resolveHouse would even make sense) ---
+app.post("/api/houses", buildLimiter, (req, res) => {
+  const body = req.body || {};
+  try {
+    const house = houses.createHouse({ name: body.name, city: body.city, language: body.language });
+    res.status(201).json({ slug: house.slug, name: house.name, city: house.city, language: house.language });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get("/api/houses/:slug", (req, res) => {
+  const house = houses.getHouse(req.params.slug.toLowerCase());
+  if (!house) {
+    return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
+  }
+  const db = getDb(house.slug);
+  const memberCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
+  res.json({ slug: house.slug, name: house.name, city: house.city, language: house.language, memberCount });
+});
+
+// Everything below operates on req.house, resolved from ?h=<slug>. Scoped
+// to /api only — mounting this with no path would also run it for the
+// static page/asset requests (GET / , /app.js, ...), where a bad ?h= on
+// the page URL would hijack the whole page load into a raw JSON 404
+// instead of letting index.html load and show its own "not found" state.
+app.use("/api", resolveHouse);
 
 // --- Camera bin-check (Gemini) ---
 // multer.memoryStorage() above means the photo only ever exists as an
@@ -79,8 +147,8 @@ app.post("/api/check", checkLimiter, (req, res) => {
       // nobody's picked who they are.
       const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
       let unlocked = [];
-      if (name && currentRoster().includes(name)) {
-        unlocked = coins.afterScan(db, name);
+      if (name && currentRoster(req.house.db).includes(name)) {
+        unlocked = coins.afterScan(req.house.db, name);
       }
       res.json({ ...result, unlocked });
     } catch (checkErr) {
@@ -121,26 +189,39 @@ app.post("/api/check/email", mailLimiter, async (req, res) => {
   }
 });
 
-// --- Collection schedule (kept server-side only, in rotation.js — this
-// just serves it, so the frontend doesn't carry a second hand-copied
-// version that can silently drift from the one the API actually uses) ---
+// --- Collection schedule — the original house's is the hardcoded, real
+// Luxembourg calendar in rotation.js; a custom house's is whatever's in its
+// own `schedule` table (starts empty). Served as the same nested
+// {"YYYY-MM": {day: code}} shape either way, so the frontend doesn't need
+// to know which kind of house it's looking at. ---
 app.get("/api/schedule", (req, res) => {
-  res.json(SCHEDULE);
+  if (req.house.slug === DEFAULT_SLUG) {
+    return res.json(SCHEDULE);
+  }
+  const rows = req.house.db.prepare("SELECT date_key, codes FROM schedule").all();
+  const nested = {};
+  rows.forEach((r) => {
+    const [y, m, d] = r.date_key.split("-");
+    const monthKey = `${y}-${m}`;
+    if (!nested[monthKey]) nested[monthKey] = {};
+    nested[monthKey][Number(d)] = r.codes;
+  });
+  res.json(nested);
 });
 
 // --- Roster (housemates) ---
 app.get("/api/roster", (req, res) => {
-  res.json(currentRoster());
+  res.json(currentRoster(req.house.db));
 });
 
 app.get("/api/roster/full", (req, res) => {
-  res.json(currentRosterFull());
+  res.json(currentRosterFull(req.house.db));
 });
 
 const MAX_OCCUPATION_LENGTH = 60;
 
 app.patch("/api/roster/:name", writeLimiter, (req, res) => {
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (!roster.includes(req.params.name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
@@ -149,8 +230,8 @@ app.patch("/api/roster/:name", writeLimiter, (req, res) => {
   if (occupation && UNSAFE_NAME_CHARS.test(occupation)) {
     return res.status(400).json({ error: "Occupation can't contain <, >, &, quotes, or control characters." });
   }
-  db.prepare("UPDATE roster SET occupation = ? WHERE name = ?").run(occupation || null, req.params.name);
-  res.json(currentRosterFull());
+  req.house.db.prepare("UPDATE roster SET occupation = ? WHERE name = ?").run(occupation || null, req.params.name);
+  res.json(currentRosterFull(req.house.db));
 });
 
 app.post("/api/roster", writeLimiter, (req, res) => {
@@ -165,34 +246,34 @@ app.post("/api/roster", writeLimiter, (req, res) => {
   if (UNSAFE_NAME_CHARS.test(name)) {
     return res.status(400).json({ error: "Name can't contain <, >, &, quotes, or control characters." });
   }
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (roster.some((n) => n.toLowerCase() === name.toLowerCase())) {
     return res.status(409).json({ error: "That name is already on the roster." });
   }
-  const nextPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
-  db.prepare("INSERT INTO roster (name, position, created_at) VALUES (?, ?, ?)").run(name, nextPos, new Date().toISOString());
-  res.status(201).json(currentRoster());
+  const nextPos = req.house.db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
+  req.house.db.prepare("INSERT INTO roster (name, position, created_at) VALUES (?, ?, ?)").run(name, nextPos, new Date().toISOString());
+  res.status(201).json(currentRoster(req.house.db));
 });
 
 app.delete("/api/roster/:name", writeLimiter, (req, res) => {
   const name = req.params.name;
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (roster.length <= 1) {
     return res.status(400).json({ error: "At least one housemate has to stay on the roster." });
   }
-  db.prepare("DELETE FROM roster WHERE name = ?").run(name);
-  res.json(currentRoster());
+  req.house.db.prepare("DELETE FROM roster WHERE name = ?").run(name);
+  res.json(currentRoster(req.house.db));
 });
 
 // --- Bin duty tasks: two-step out/back confirmation ---
 app.get("/api/tasks/current", (req, res) => {
-  res.json(getCurrentTask(db, new Date()));
+  res.json(getCurrentTask(req.house.db, new Date(), flatScheduleFor(req.house)));
 });
 
 app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
   const name = req.body && req.body.name;
   try {
-    res.json(confirmOut(db, req.params.dateKey, currentRoster(), name));
+    res.json(confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house)));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -201,12 +282,12 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
 app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
   const name = req.body && req.body.name;
   try {
-    const row = confirmBack(db, req.params.dateKey, currentRoster(), name);
+    const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
     // Coins go to whoever took the bin OUT (matches how the leaderboard has
     // always credited a task — see coin_ledger's backfill in db.js), not
     // necessarily whoever confirmed it back, since those can be different
     // people.
-    const unlocked = row.out_by ? coins.afterTaskCompleted(db, row.out_by) : [];
+    const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
     res.json({ ...row, unlocked });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -214,22 +295,22 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
 });
 
 app.get("/api/tasks/leaderboard", (req, res) => {
-  res.json(coins.getLeaderboard(db));
+  res.json(coins.getLeaderboard(req.house.db));
 });
 
 // --- Scrap coins: balance/history/achievements for one person, donations,
 // and the Sort It quiz's perfect-round bonus ---
 app.get("/api/coins/:name", (req, res) => {
   const name = req.params.name;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
-  const turnsRow = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE out_by = ? AND back_at IS NOT NULL").get(name);
+  const turnsRow = req.house.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE out_by = ? AND back_at IS NOT NULL").get(name);
   res.json({
     name,
-    balance: coins.getBalance(db, name),
-    history: coins.getHistory(db, name, 20),
-    achievements: coins.getAchievements(db, name),
+    balance: coins.getBalance(req.house.db, name),
+    history: coins.getHistory(req.house.db, name, 20),
+    achievements: coins.getAchievements(req.house.db, name),
     turnsTaken: turnsRow.n
   });
 });
@@ -239,7 +320,7 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
   const from = typeof body.from === "string" ? body.from.trim() : "";
   const to = typeof body.to === "string" ? body.to.trim() : "";
   const amount = Number(body.amount);
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (!roster.includes(from) || !roster.includes(to)) {
     return res.status(400).json({ error: "Pick two names that are on the roster." });
   }
@@ -250,8 +331,8 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
     return res.status(400).json({ error: "Amount has to be a whole number between 1 and 1000." });
   }
   try {
-    const unlocked = coins.donate(db, from, to, amount);
-    res.json({ ok: true, balance: coins.getBalance(db, from), unlocked });
+    const unlocked = coins.donate(req.house.db, from, to, amount);
+    res.json({ ok: true, balance: coins.getBalance(req.house.db, from), unlocked });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -267,7 +348,7 @@ app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const correct = Number(body.correct);
   const total = Number(body.total);
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "That name isn't on the roster." });
   }
   if (!Number.isInteger(correct) || !Number.isInteger(total) || total <= 0 || correct > total) {
@@ -276,35 +357,35 @@ app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   if (correct < total) {
     return res.json({ awarded: false, unlocked: [] });
   }
-  const unlocked = coins.afterPerfectRound(db, name);
-  res.json({ awarded: true, unlocked, balance: coins.getBalance(db, name) });
+  const unlocked = coins.afterPerfectRound(req.house.db, name);
+  res.json({ awarded: true, unlocked, balance: coins.getBalance(req.house.db, name) });
 });
 
 // --- Reactions on tonight's task (heart / thumbs up / thumbs down) ---
 const REACTION_EMOJI = new Set(["heart", "up", "down"]);
 
 app.get("/api/reactions/:dateKey", (req, res) => {
-  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const rows = req.house.db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
   const counts = { heart: 0, up: 0, down: 0 };
   rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
-  res.json({ counts, mine: {} , rows });
+  res.json({ counts, mine: {}, rows });
 });
 
 app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
   const body = req.body || {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const emoji = body.emoji;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "That name isn't on the roster." });
   }
   if (!REACTION_EMOJI.has(emoji)) {
     return res.status(400).json({ error: "Unknown reaction." });
   }
-  db.prepare(
+  req.house.db.prepare(
     "INSERT INTO reactions (date_key, name, emoji, created_at) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT(date_key, name) DO UPDATE SET emoji = excluded.emoji, created_at = excluded.created_at"
   ).run(req.params.dateKey, name, emoji, new Date().toISOString());
-  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const rows = req.house.db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
   const counts = { heart: 0, up: 0, down: 0 };
   rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
   res.json({ counts, rows });
@@ -314,7 +395,7 @@ app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
 // Only ever lists/emails CONFIRMED accounts — an unconfirmed row is just a
 // pending request nobody else can see or be notified from.
 app.get("/api/subscribe", (req, res) => {
-  const rows = db.prepare("SELECT name, language FROM accounts WHERE confirmed = 1 ORDER BY created_at ASC").all();
+  const rows = req.house.db.prepare("SELECT name, language FROM accounts WHERE confirmed = 1 ORDER BY created_at ASC").all();
   res.json(rows);
 });
 
@@ -324,7 +405,7 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const language = VALID_LANGS.has(body.language) ? body.language : "en";
 
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
   }
   if (!EMAIL_RE.test(email)) {
@@ -332,12 +413,13 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   }
 
   const token = crypto.randomBytes(24).toString("hex");
-  db.prepare(
+  req.house.db.prepare(
     "INSERT INTO accounts (email, name, language, created_at, confirmed, confirm_token) VALUES (?, ?, ?, ?, 0, ?) " +
     "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language, confirmed = 0, confirm_token = excluded.confirm_token"
   ).run(email, name, language, new Date().toISOString(), token);
 
-  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}`;
+  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}` +
+    (req.house.slug === DEFAULT_SLUG ? "" : `?h=${encodeURIComponent(req.house.slug)}`);
   try {
     await sendConfirmationEmail(email, language, name, confirmUrl);
     res.status(202).json({ pending: true });
@@ -348,18 +430,18 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
 });
 
 app.get("/api/subscribe/confirm/:token", (req, res) => {
-  const row = db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
+  const row = req.house.db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
   if (!row) {
     return res.status(404).send("<p>That confirmation link is invalid or already used. Close this tab and subscribe again from Bin Duty.</p>");
   }
-  db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
+  req.house.db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
   // One-time signup bonus — guarded so re-subscribing under a new email
   // later doesn't pay out twice for the same person.
   let bonusLine = "";
-  if (currentRoster().includes(row.name)) {
-    const already = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(row.name);
+  if (currentRoster(req.house.db).includes(row.name)) {
+    const already = req.house.db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(row.name);
     if (!already) {
-      coins.afterSubscribe(db, row.name);
+      coins.afterSubscribe(req.house.db, row.name);
       bonusLine = " You've also earned +10 Scrap coins for subscribing.";
     }
   }
@@ -377,13 +459,13 @@ function maskEmail(email) {
 
 app.get("/api/subscribe/status/:name", (req, res) => {
   const name = req.params.name;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
-  const row = db.prepare(
+  const row = req.house.db.prepare(
     "SELECT email, language FROM accounts WHERE name = ? AND confirmed = 1 ORDER BY created_at DESC LIMIT 1"
   ).get(name);
-  const bonus = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(name);
+  const bonus = req.house.db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(name);
   res.json({
     subscribed: !!row,
     email: row ? maskEmail(row.email) : null,
@@ -393,12 +475,12 @@ app.get("/api/subscribe/status/:name", (req, res) => {
 });
 
 app.delete("/api/subscribe/by-name/:name", writeLimiter, (req, res) => {
-  db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
+  req.house.db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
   res.json({ ok: true });
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
-  db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
+  req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
   res.json({ ok: true });
 });
 
@@ -407,9 +489,9 @@ app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
 // no page load or confirmation click required. Same effect as the DELETE
 // route above, just reachable the way a mail client actually calls it.
 app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
-  const row = db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
+  const row = req.house.db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
     .get(req.params.token, req.params.token.toLowerCase());
-  if (row) db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
+  if (row) req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
   res.status(200).send("OK");
 });
 
@@ -429,6 +511,11 @@ app.listen(PORT, () => {
 // due tomorrow, so most runs send zero mail; that's expected, not a bug.
 // Validated at startup: an invalid cron expression must not crash the whole
 // server, and a typo in .env must not silently disable the reminder either.
+//
+// Scoped to the original house only — a custom house's members can still
+// subscribe and get a one-off confirmation/scan-result email (both routes
+// above are per-house), but this scheduled digest doesn't yet iterate every
+// house. Worth building once there's more than a couple of custom houses.
 const DEFAULT_NOTIFY_CRON = "0 18 * * *";
 const NOTIFY_CRON = process.env.NOTIFY_CRON || DEFAULT_NOTIFY_CRON;
 if (!cron.validate(NOTIFY_CRON)) {
@@ -436,7 +523,7 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
-    const result = await sendDailyReminders(db, currentRoster());
+    const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb));
     if (!result.dueTomorrow) {
       console.log("Reminder check: nothing due tomorrow, no mail sent.");
       return;
@@ -461,7 +548,7 @@ if (!cron.validate(WEEK_AHEAD_CRON)) {
 }
 cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AHEAD_CRON, async () => {
   try {
-    const result = await sendWeekAheadNotices(db, currentRoster());
+    const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb));
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
   } catch (err) {
