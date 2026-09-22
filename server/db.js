@@ -160,4 +160,22 @@ function getDb(slug) {
   return cache.get(key);
 }
 
-module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR };
+// Permanently removes a custom house's database: closes the cached
+// connection, then deletes the file and its WAL/SHM siblings. Refuses the
+// original house outright, whatever slug is passed.
+function destroyHouseDb(slug) {
+  if (!slug || slug === DEFAULT_SLUG || !/^[a-z0-9-]+$/.test(slug)) {
+    throw new Error("Refusing to destroy that database.");
+  }
+  var db = cache.get(slug);
+  if (db) {
+    db.close();
+    cache.delete(slug);
+  }
+  ["", "-wal", "-shm"].forEach(function (suffix) {
+    var file = path.join(HOUSES_DIR, slug + ".sqlite" + suffix);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  });
+}
+
+module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR, destroyHouseDb };

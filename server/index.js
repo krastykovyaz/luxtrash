@@ -15,7 +15,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const cron = require("node-cron");
-const { getDb, DEFAULT_SLUG } = require("./db");
+const { getDb, DEFAULT_SLUG, destroyHouseDb } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
@@ -119,10 +119,36 @@ function resolveHouse(req, res, next) {
 app.post("/api/houses", buildLimiter, (req, res) => {
   const body = req.body || {};
   try {
-    const house = houses.createHouse({ name: body.name, city: body.city, language: body.language });
-    res.status(201).json({ slug: house.slug, name: house.name, city: house.city, language: house.language });
+    const { house, ownerToken } = houses.createHouse({ name: body.name, city: body.city, language: body.language });
+    // ownerToken is the builder's proof of ownership — returned only here,
+    // once; the browser keeps it, and it's what DELETE below checks.
+    res.status(201).json({ slug: house.slug, name: house.name, city: house.city, language: house.language, ownerToken });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Destroy a house — only whoever built it (holds its owner key) can. The
+// original house never has an owner key, so it can never be destroyed here.
+// Irreversible: the registry row and the house's whole database file go.
+app.delete("/api/houses/:slug", buildLimiter, (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  const house = houses.getHouse(slug);
+  if (!house) {
+    return res.status(404).json({ error: "That house doesn't exist.", code: "HOUSE_NOT_FOUND" });
+  }
+  const token = req.body && req.body.ownerToken;
+  if (!houses.isOwner(slug, token)) {
+    return res.status(403).json({ error: "Only the person who built this house can destroy it.", code: "NOT_OWNER" });
+  }
+  try {
+    houses.deleteHouse(slug);
+    destroyHouseDb(slug);
+    console.log(`House destroyed by its builder: ${slug}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Destroying house ${slug} failed: ${err.message}`);
+    res.status(500).json({ error: "Couldn't destroy that house — try again." });
   }
 });
 

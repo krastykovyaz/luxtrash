@@ -30,6 +30,18 @@ var houseCols = db.prepare("PRAGMA table_info(houses)").all().map(function (c) {
 if (houseCols.indexOf("is_original") === -1) {
   db.exec("ALTER TABLE houses ADD COLUMN is_original INTEGER NOT NULL DEFAULT 0");
 }
+// Proof of "who built this house", with no accounts: a random owner key is
+// handed to the builder's browser exactly once, and only its SHA-256 hash is
+// kept here — so the key itself never sits in the database. Houses built
+// before this existed (and the original house) have none, and so can't be
+// destroyed from the app.
+if (houseCols.indexOf("owner_token_hash") === -1) {
+  db.exec("ALTER TABLE houses ADD COLUMN owner_token_hash TEXT");
+}
+
+function hashToken(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
 
 const MAX_NAME_LENGTH = 60;
 const MAX_CITY_LENGTH = 60;
@@ -94,11 +106,27 @@ function createHouse({ name, city, language }) {
     if (!getHouse(slug)) break;
   }
 
+  var ownerToken = crypto.randomBytes(24).toString("hex");
   db.prepare(
-    "INSERT INTO houses (slug, name, city, language, created_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(slug, cleanName, cleanCity || null, cleanLang, new Date().toISOString());
+    "INSERT INTO houses (slug, name, city, language, created_at, owner_token_hash) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(slug, cleanName, cleanCity || null, cleanLang, new Date().toISOString(), hashToken(ownerToken));
 
-  return getHouse(slug);
+  // The plaintext owner key is returned only here, once, to the builder.
+  return { house: getHouse(slug), ownerToken: ownerToken };
+}
+
+// True only for the house's builder: a real (non-original) house whose
+// stored hash matches the key presented. Constant-time compare.
+function isOwner(slug, token) {
+  var row = getHouse(slug);
+  if (!row || row.is_original || !row.owner_token_hash || typeof token !== "string" || !token) return false;
+  var a = Buffer.from(row.owner_token_hash, "hex");
+  var b = Buffer.from(hashToken(token), "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function deleteHouse(slug) {
+  db.prepare("DELETE FROM houses WHERE slug = ? AND is_original = 0").run(slug);
 }
 
 // The app's original house (the one that existed before multi-house
@@ -123,4 +151,4 @@ function ensureOriginalHouse(name) {
   return getHouse(slug);
 }
 
-module.exports = { getHouse, createHouse, ensureOriginalHouse };
+module.exports = { getHouse, createHouse, ensureOriginalHouse, isOwner, deleteHouse };

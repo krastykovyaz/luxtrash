@@ -396,6 +396,15 @@
   .scan-email-row .claim-select { flex: 1; min-width: 0; }
   .scan-footnote { font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
 
+  /* ---- anonymous chat: entry button + "coming soon" screen ---- */
+  .chat-pill { width: 100%; font-family: 'Work Sans', sans-serif; color: var(--ink); text-align: left; cursor: pointer; }
+  .chat-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .soon-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 9px; }
+  .chat-soon { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 28px 22px; }
+  .chat-soon-icon { width: 54px; height: 54px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 4px; }
+  .chat-soon-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.03em; color: var(--accent); }
+  .chat-soon-body { font-size: 13px; color: var(--ink-soft); line-height: 1.55; max-width: 32ch; }
+
   /* ---- roster tab (Timetable & roster) ---- */
   .page-title { font-size: 18px; font-weight: 600; color: var(--ink); }
   .tw-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
@@ -497,6 +506,18 @@
   .house-form[hidden] { display: none; }
   .house-form .claim-row .claim-select { flex: 1; min-width: 0; }
 
+  /* ---- destroy house (builder only) ---- */
+  .destroy-box { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .destroy-box[hidden], .destroy-confirm[hidden] { display: none; }
+  .destroy-note { font-size: 11px; color: var(--ink-faint); }
+  .destroy-toggle { align-self: flex-start; background: none; border: none; padding: 0; color: var(--wrong); font-family: 'Work Sans', sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .destroy-toggle:focus-visible { outline: 2px solid var(--wrong); outline-offset: 3px; border-radius: 4px; }
+  .destroy-confirm { display: flex; flex-direction: column; gap: 8px; }
+  .destroy-warning { font-size: 12px; line-height: 1.5; color: var(--ink-soft); background: rgba(226,67,47,0.1); border: 1px solid rgba(226,67,47,0.4); border-radius: 10px; padding: 10px 12px; }
+  .destroy-warning strong { color: var(--ink); }
+  .destroy-confirm .claim-row .claim-select { flex: 1; min-width: 0; }
+  .stamp-btn.destroy-btn { background: var(--wrong); color: #fff; border-color: var(--wrong); }
+
   /* ---- landing page (no house selected — build or join only) ---- */
   #landingPage { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
   #landingPage[hidden] { display: none; }
@@ -585,11 +606,13 @@
       <div class="roster-avatars" id="rosterStripHome"></div>
     </div>
 
-    <div class="poster coins-pill" id="homeCoinsPill">
-      <div class="coins-pill-icon" id="homeCoinsAvatar">S</div>
-      <div class="coins-pill-label" id="homeCoinsLabel"></div>
-      <button class="coins-pill-link" id="rewardsJumpBtn" type="button" data-i18n="rewardsJump"></button>
-    </div>
+    <!-- Entry point for the anonymous house chat. The chat itself isn't built
+         yet — this opens a "coming soon" screen (see #chatSubview). -->
+    <button class="poster coins-pill chat-pill" id="chatEntryBtn" type="button">
+      <span class="coins-pill-icon on">&#128172;</span>
+      <span class="coins-pill-label" data-i18n="chatEntryLabel"></span>
+      <span class="soon-badge" data-i18n="chatSoonBadge"></span>
+    </button>
 
     <div class="launch-row">
       <button class="launch-btn launch-primary" id="scanLaunchBtn" type="button" data-i18n="scanLaunch"></button>
@@ -641,6 +664,16 @@
     <div class="poster quiz-foot">
       <span><span data-i18n="streakLabel"></span>: <b id="gStreak">0</b></span>
       <span class="quiz-foot-r" data-i18n="perfectRoundNote"></span>
+    </div>
+  </section>
+
+  <!-- Anonymous chat: not built yet — a plain "coming soon" screen. -->
+  <section data-view="home" id="chatSubview" hidden>
+    <button class="subview-head" id="chatBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="chatEntryLabel"></span></button>
+    <div class="poster chat-soon">
+      <div class="chat-soon-icon">&#128172;</div>
+      <div class="chat-soon-title" data-i18n="chatSoonTitle"></div>
+      <div class="chat-soon-body" data-i18n="chatSoonBody"></div>
     </div>
   </section>
 
@@ -800,6 +833,20 @@
           <button class="stamp-btn" id="joinHouseSubmitBtn" type="button" data-i18n="joinHouseSubmitBtn"></button>
         </div>
         <div class="claim-status" id="joinHouseStatus"></div>
+      </div>
+
+      <!-- Only on the device that built this house (it holds the owner key). -->
+      <div class="destroy-box" id="destroyHouseBox" hidden>
+        <div class="destroy-note" data-i18n="destroyHouseOwnerNote"></div>
+        <button class="destroy-toggle" id="destroyToggleBtn" type="button" data-i18n="destroyHouseBtn"></button>
+        <div class="destroy-confirm" id="destroyConfirm" hidden>
+          <div class="destroy-warning" id="destroyWarning"></div>
+          <div class="claim-row">
+            <input type="text" id="destroyNameInput" class="claim-select" autocomplete="off" data-i18n-placeholder="destroyHousePlaceholder">
+            <button class="stamp-btn destroy-btn" id="destroySubmitBtn" type="button" data-i18n="destroyHouseConfirmBtn" disabled></button>
+          </div>
+          <div class="claim-status" id="destroyStatus"></div>
+        </div>
       </div>
     </div>
   </section>

@@ -73,6 +73,29 @@
     MY_HOUSES.unshift({ slug: slug, name: name || slug });
     try { localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES)); } catch (e) {}
   }
+  // Owner keys for houses this browser built — the only proof of "who built
+  // it" in an app with no accounts. Handed out once by the server at build
+  // time; needed to destroy the house. Losing this storage loses the key.
+  function getOwnerTokens() {
+    try {
+      var t = JSON.parse(localStorage.getItem("binDutyOwnerTokens") || "{}");
+      return t && typeof t === "object" ? t : {};
+    } catch (e) { return {}; }
+  }
+  function setOwnerToken(slug, token) {
+    var t = getOwnerTokens();
+    if (token) t[slug] = token; else delete t[slug];
+    try { localStorage.setItem("binDutyOwnerTokens", JSON.stringify(t)); } catch (e) {}
+  }
+  function forgetHouse(slug) {
+    MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
+    try {
+      localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES));
+      localStorage.removeItem("binDutyMe:" + slug);
+      localStorage.removeItem("binDutyBestStreak:" + slug);
+    } catch (e) {}
+    setOwnerToken(slug, null);
+  }
   function houseLink(slug) {
     var url = new URL(location.href);
     url.search = slug ? "?h=" + encodeURIComponent(slug) : "";
@@ -241,16 +264,21 @@
   var homeDashboard = document.getElementById("homeDashboard");
   var scanSubview = document.getElementById("scanSubview");
   var sortItSubview = document.getElementById("sortItSubview");
+  var chatSubview = document.getElementById("chatSubview");
   function showHomeSubview(which) {
     homeDashboard.hidden = which !== "dashboard";
     scanSubview.hidden = which !== "scan";
     sortItSubview.hidden = which !== "sortit";
+    chatSubview.hidden = which !== "chat";
     window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   }
   document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
   document.getElementById("sortItLaunchBtn").addEventListener("click", function () { showHomeSubview("sortit"); });
   document.getElementById("scanBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
   document.getElementById("sortItBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
+  // Anonymous chat — not built yet; the button opens a "coming soon" screen.
+  document.getElementById("chatEntryBtn").addEventListener("click", function () { showHomeSubview("chat"); });
+  document.getElementById("chatBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
 
   function showView(view) {
     if (VIEWS.indexOf(view) === -1) view = "home";
@@ -274,7 +302,6 @@
   showView(currentView);
 
   document.getElementById("fullCalendarJumpBtn").addEventListener("click", function () { showView("roster"); });
-  document.getElementById("rewardsJumpBtn").addEventListener("click", function () { showView("rewards"); });
 
   function applyLang() {
     var meta = window.LANGS.find(function (l) { return l.code === currentLang; }) || window.LANGS[0];
@@ -309,6 +336,7 @@
     renderTask(currentTask);
     renderNotifyForm();
     renderHousesList();
+    renderDestroyBox();
     gameShowItem();
     loadLeaderboard();
     loadSubscribers();
@@ -1420,6 +1448,7 @@
         })
         .then(function (house) {
           rememberHouse(house.slug, house.name);
+          if (house.ownerToken) setOwnerToken(house.slug, house.ownerToken);
           location.href = houseLink(house.slug);
         })
         .catch(function (e) {
@@ -1468,6 +1497,64 @@
     joinInput: "joinHouseInput", joinSubmit: "joinHouseSubmitBtn", joinStatus: "joinHouseStatus"
   });
   function renderHousesList() { housesWidget.render(); }
+
+  // ---- destroy this house: only on the browser that built it (holds its
+  // owner key). Two steps, and the house name has to be typed to confirm,
+  // since it wipes the house for everyone and can't be undone. ----
+  var HOUSE_NAME = "";
+  var destroyBox = document.getElementById("destroyHouseBox");
+  var destroyToggleBtn = document.getElementById("destroyToggleBtn");
+  var destroyConfirm = document.getElementById("destroyConfirm");
+  var destroyWarning = document.getElementById("destroyWarning");
+  var destroyNameInput = document.getElementById("destroyNameInput");
+  var destroySubmitBtn = document.getElementById("destroySubmitBtn");
+  var destroyStatus = document.getElementById("destroyStatus");
+
+  function renderDestroyBox() {
+    var token = HOUSE_SLUG ? getOwnerTokens()[HOUSE_SLUG] : null;
+    destroyBox.hidden = !(token && HOUSE_NAME);
+    if (destroyBox.hidden) return;
+    destroyWarning.innerHTML = "";
+    var parts = fmt("destroyHouseWarning", { name: "\u0000" }).split("\u0000");
+    destroyWarning.appendChild(document.createTextNode(parts[0]));
+    var strong = document.createElement("strong");
+    strong.textContent = HOUSE_NAME;
+    destroyWarning.appendChild(strong);
+    destroyWarning.appendChild(document.createTextNode(parts[1] || ""));
+  }
+  destroyToggleBtn.addEventListener("click", function () {
+    destroyConfirm.hidden = !destroyConfirm.hidden;
+    destroyNameInput.value = "";
+    destroySubmitBtn.disabled = true;
+    destroyStatus.textContent = "";
+    if (!destroyConfirm.hidden) destroyNameInput.focus();
+  });
+  destroyNameInput.addEventListener("input", function () {
+    destroySubmitBtn.disabled = destroyNameInput.value.trim() !== HOUSE_NAME.trim();
+  });
+  destroySubmitBtn.addEventListener("click", function () {
+    var token = getOwnerTokens()[HOUSE_SLUG];
+    if (!token || destroyNameInput.value.trim() !== HOUSE_NAME.trim()) return;
+    destroySubmitBtn.disabled = true;
+    destroyStatus.textContent = tr("destroyHouseDestroying");
+    fetch("/api/houses/" + encodeURIComponent(HOUSE_SLUG), {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ownerToken: token })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        forgetHouse(HOUSE_SLUG);
+        location.href = location.pathname; // back to the landing page
+      })
+      .catch(function (e) {
+        destroyStatus.textContent = e.message || tr("destroyHouseFailed");
+        destroySubmitBtn.disabled = false;
+      });
+  });
 
   // The landing page's own instance — same widget, different DOM, shown
   // full-page (see startApp/landing bootstrap below) when no house is
@@ -1590,19 +1677,14 @@
   var balanceNum = document.getElementById("balanceNum");
 
   function loadAchievements() {
-    var homeCoinsLabel = document.getElementById("homeCoinsLabel");
-    var homeCoinsAvatar = document.getElementById("homeCoinsAvatar");
     if (!ME) {
       achvGrid.innerHTML = "";
       achvUnlockedMsg.textContent = tr("meNotPickedForAchievements");
       achvUnlockedMsg.classList.add("muted");
       balanceNum.textContent = "—";
-      homeCoinsLabel.textContent = tr("homeCoinsPrompt");
-      homeCoinsAvatar.classList.remove("on");
       return;
     }
     achvUnlockedMsg.textContent = "";
-    homeCoinsAvatar.classList.add("on");
     fetch(api("/api/coins/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
@@ -1617,7 +1699,6 @@
         balanceNum.textContent = data.balance;
         statCoins.textContent = data.balance;
         statTurns.textContent = data.turnsTaken;
-        homeCoinsLabel.textContent = fmt("scrapCoinsCount", { n: data.balance });
       })
       .catch(function () {});
   }
@@ -1994,6 +2075,7 @@
       .then(function (r) { if (!r.ok) throw new Error("not found"); return r.json(); })
       .then(function (house) {
         rememberHouse(house.slug, house.name);
+        HOUSE_NAME = house.name;
         document.title = house.name + " · Bin Duty";
         startApp();
       })
