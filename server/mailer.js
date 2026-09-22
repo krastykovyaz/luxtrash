@@ -24,24 +24,25 @@ function getTransporter() {
   return transporter;
 }
 
-function weekdayShort(lang, d) {
-  return t(lang, "weekdays")[(d.getDay() + 6) % 7];
-}
-
-function buildWeeklyMessage(lang, roster, today) {
-  const person = personForWeek(today, roster);
-  const lines = [`${t(lang, "dutyMsgHeading")} ${person}`, ""];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-    const codes = codesFor(d);
-    if (!codes) continue;
-    const label = codes === "HOLIDAY"
-      ? t(lang, "publicHolidayShort")
-      : codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
-    lines.push(`- ${weekdayShort(lang, d)} ${d.getDate()}: ${label}`);
-  }
-  lines.push("", t(lang, "dutyMsgFooter"));
-  return { person, text: lines.join("\n") };
+// Builds the reminder for one specific collection day — sent the evening
+// before ("6pm the day before", same "opens the evening before" rule as the
+// in-app task card), not a fixed weekly digest. Returns null when the given
+// date has no real collection (weekend gap or public holiday), so the
+// caller knows to send nothing that day.
+function buildTomorrowMessage(lang, roster, tomorrow) {
+  const codes = codesFor(tomorrow);
+  if (!codes || codes === "HOLIDAY") return null;
+  const label = codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  const person = personForWeek(tomorrow, roster);
+  const subject = `${t(lang, "tonightLabel")} ${label}`;
+  const text = [
+    `${t(lang, "tonightLabel")} ${label}`,
+    "",
+    `${t(lang, "dutyMsgHeading")} ${person}`,
+    "",
+    t(lang, "dutyMsgFooter")
+  ].join("\n");
+  return { subject, text, person, label };
 }
 
 // Sends a "click to confirm" email for double opt-in — an open, unverified
@@ -62,33 +63,39 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl) {
   });
 }
 
-// Sends this week's reminder to every CONFIRMED account, each in their own
-// preferred language. Returns { sent, skipped, errors } for logging/inspection.
-async function sendWeeklyReminders(db, roster) {
+// Sends tomorrow's reminder to every CONFIRMED account, each in their own
+// preferred language — but only on days that actually have a collection
+// tomorrow. Returns { sent, skipped, errors, dueTomorrow } for logging.
+async function sendDailyReminders(db, roster) {
   const transport = getTransporter();
   const accounts = db.prepare("SELECT email, name, language FROM accounts WHERE confirmed = 1").all();
-  if (!transport) return { sent: 0, skipped: accounts.length, errors: [] };
-  if (!roster.length) return { sent: 0, skipped: accounts.length, errors: [] };
 
   const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const dueTomorrow = !!(codesFor(tomorrow) && codesFor(tomorrow) !== "HOLIDAY");
+
+  if (!dueTomorrow) return { sent: 0, skipped: accounts.length, errors: [], dueTomorrow: false };
+  if (!transport) return { sent: 0, skipped: accounts.length, errors: [], dueTomorrow: true };
+  if (!roster.length) return { sent: 0, skipped: accounts.length, errors: [], dueTomorrow: true };
+
   const errors = [];
   let sent = 0;
 
   for (const account of accounts) {
     try {
-      const { person, text } = buildWeeklyMessage(account.language, roster, today);
+      const msg = buildTomorrowMessage(account.language, roster, tomorrow);
       await transport.sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: account.email,
-        subject: `${t(account.language, "dutyMsgHeading")} ${person}`,
-        text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${text}`
+        subject: msg.subject,
+        text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${msg.text}`
       });
       sent++;
     } catch (err) {
       errors.push({ email: account.email, message: err.message });
     }
   }
-  return { sent, skipped: 0, errors };
+  return { sent, skipped: 0, errors, dueTomorrow: true };
 }
 
 // Emails a copy of one camera-check result to whoever asked for it. Text
@@ -110,4 +117,4 @@ async function sendCheckResult(email, lang, data) {
   });
 }
 
-module.exports = { sendWeeklyReminders, buildWeeklyMessage, getTransporter, sendCheckResult, sendConfirmationEmail };
+module.exports = { sendDailyReminders, buildTomorrowMessage, getTransporter, sendCheckResult, sendConfirmationEmail };

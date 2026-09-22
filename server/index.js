@@ -17,7 +17,7 @@ const multer = require("multer");
 const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
-const { sendWeeklyReminders, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const { sendDailyReminders, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
 const { SCHEDULE } = require("./rotation");
@@ -238,21 +238,28 @@ app.listen(PORT, () => {
   }
 });
 
-// Weekly reminder email — Mondays at 7:00 Luxembourg time by default.
+// Checked every day at 18:00 Luxembourg time — "6pm the day before" — same
+// window rule the in-app task card already uses. Most days there's nothing
+// due tomorrow, so most runs send zero mail; that's expected, not a bug.
 // Validated at startup: an invalid cron expression must not crash the whole
 // server, and a typo in .env must not silently disable the reminder either.
-const NOTIFY_CRON = process.env.NOTIFY_CRON || "0 7 * * 1";
+const DEFAULT_NOTIFY_CRON = "0 18 * * *";
+const NOTIFY_CRON = process.env.NOTIFY_CRON || DEFAULT_NOTIFY_CRON;
 if (!cron.validate(NOTIFY_CRON)) {
-  console.error(`NOTIFY_CRON "${NOTIFY_CRON}" is not a valid cron expression — falling back to "0 7 * * 1".`);
+  console.error(`NOTIFY_CRON "${NOTIFY_CRON}" is not a valid cron expression — falling back to "${DEFAULT_NOTIFY_CRON}".`);
 }
-cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : "0 7 * * 1", async () => {
+cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
-    const result = await sendWeeklyReminders(db, currentRoster());
-    console.log(`Weekly reminder run: sent ${result.sent}, skipped ${result.skipped}` +
+    const result = await sendDailyReminders(db, currentRoster());
+    if (!result.dueTomorrow) {
+      console.log("Reminder check: nothing due tomorrow, no mail sent.");
+      return;
+    }
+    console.log(`Reminder run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
   } catch (err) {
     // An error here must never take the whole process down with it — it's
     // a background job, not a request handler.
-    console.error("Weekly reminder run threw:", err.message);
+    console.error("Reminder run threw:", err.message);
   }
 });

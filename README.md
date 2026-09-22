@@ -26,14 +26,16 @@ your own `.env` file** (already gitignored) — never share it in chat, a commit
 anywhere else it could leak. `.env` is loaded by `dotenv` and read only server-side;
 it's never sent to the browser.
 
-## Notifications (registration + weekly email)
+## Notifications (registration + daily email)
 
 Anyone on the roster can subscribe on the page itself — pick their name, enter an
-email, pick a language — and a cron job (`node-cron`, Monday 07:00 server time by
-default, `NOTIFY_CRON` in `.env` to change it) emails everyone subscribed their own
-week's schedule, in their own language. There's no password/login: it's a mailing
-list, not an account system, which matches a ~6-person house better than building
-real auth.
+email, pick a language — and a cron job (`node-cron`, checked every day at 18:00
+Luxembourg time by default, `NOTIFY_CRON` in `.env` to change it) emails everyone
+subscribed what to put out *tomorrow*, in their own language — the same "opens the
+evening before" rule the in-app task card uses. Most days there's nothing due
+tomorrow, so most checks send nothing; that's expected. There's no password/login:
+it's a mailing list, not an account system, which matches a ~6-person house better
+than building real auth.
 
 **Email needs SMTP credentials**, same rule as the Gemini key: fill in
 `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` in your own `.env`
