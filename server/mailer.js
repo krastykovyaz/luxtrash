@@ -73,4 +73,23 @@ async function sendWeeklyReminders(db, roster) {
   return { sent, skipped: 0, errors };
 }
 
-module.exports = { sendWeeklyReminders, buildWeeklyMessage, getTransporter };
+// Emails a copy of one camera-check result to whoever asked for it. Text
+// only — the photo itself is never saved anywhere (server or email), only
+// the identification Gemini returned.
+async function sendCheckResult(email, lang, data) {
+  const transport = getTransporter();
+  if (!transport) {
+    const err = new Error("Email isn't configured on the server.");
+    err.code = "NO_SMTP";
+    throw err;
+  }
+  const title = binLabel(lang, data.code);
+  await transport.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: email,
+    subject: `${t(lang, "scanHeading")} — ${title}`,
+    text: `${data.item || ""}\n\n${title} (${data.code})\n${data.why || ""}`
+  });
+}
+
+module.exports = { sendWeeklyReminders, buildWeeklyMessage, getTransporter, sendCheckResult };

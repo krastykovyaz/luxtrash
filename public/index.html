@@ -47,14 +47,12 @@
   .wrap { max-width: 760px; margin-inline: auto; display: flex; flex-direction: column; gap: 26px; }
 
   /* ---- language switcher ---- */
-  .lang-row { display: flex; flex-wrap: wrap; gap: 6px; }
-  .lang-btn {
-    font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.02em;
-    background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 5px;
-    padding: 6px 10px; cursor: pointer;
+  .lang-select {
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+    background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 5px;
+    padding: 8px 10px; cursor: pointer; max-width: 100%;
   }
-  .lang-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .lang-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .lang-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* ---- masthead ---- */
   .masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -287,7 +285,7 @@
 <body>
 <div class="wrap" id="app">
 
-  <div class="lang-row" id="langRow"></div>
+  <select class="lang-select" id="langSelect"></select>
 
   <div class="masthead">
     <h1>Bin Duty</h1>

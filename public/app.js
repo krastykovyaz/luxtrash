@@ -108,22 +108,24 @@
   }
 
   // ---- language switcher ----
+  var langSelect = document.getElementById("langSelect");
+  var langSelectBuilt = false;
   function renderLangRow() {
-    var row = document.getElementById("langRow");
-    row.innerHTML = "";
-    window.LANGS.forEach(function (l) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "lang-btn";
-      btn.textContent = l.name;
-      btn.setAttribute("aria-pressed", String(l.code === currentLang));
-      btn.addEventListener("click", function () {
-        currentLang = l.code;
-        try { localStorage.setItem("binDutyLang", l.code); } catch (e) {}
+    if (!langSelectBuilt) {
+      window.LANGS.forEach(function (l) {
+        var opt = document.createElement("option");
+        opt.value = l.code;
+        opt.textContent = l.name;
+        langSelect.appendChild(opt);
+      });
+      langSelect.addEventListener("change", function () {
+        currentLang = langSelect.value;
+        try { localStorage.setItem("binDutyLang", currentLang); } catch (e) {}
         applyLang();
       });
-      row.appendChild(btn);
-    });
+      langSelectBuilt = true;
+    }
+    langSelect.value = currentLang;
   }
 
   function applyLang() {

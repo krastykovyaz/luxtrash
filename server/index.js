@@ -8,7 +8,7 @@ const multer = require("multer");
 const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
-const { sendWeeklyReminders } = require("./mailer");
+const { sendWeeklyReminders, sendCheckResult } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
 
@@ -33,6 +33,9 @@ const upload = multer({
 });
 
 // --- Camera bin-check (Gemini) ---
+// multer.memoryStorage() above means the photo only ever exists as an
+// in-memory buffer for this one request — it's never written to disk or a
+// database, and is discarded the moment the response is sent.
 app.post("/api/check", (req, res) => {
   upload.single("photo")(req, res, async (err) => {
     if (err) {
@@ -48,6 +51,7 @@ app.post("/api/check", (req, res) => {
       const result = await checkPhoto(req.file.buffer, req.file.mimetype);
       res.json(result);
     } catch (checkErr) {
+      console.error(`/api/check failed — mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes, code: ${checkErr.code}, message: ${checkErr.message}`);
       const status = checkErr.code === "NO_API_KEY" ? 503 : 502;
       res.status(status).json({ error: checkErr.message, code: checkErr.code || "UNKNOWN" });
     }
