@@ -24,6 +24,15 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    email TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'en',
+    created_at TEXT NOT NULL
+  )
+`);
+
 var rosterCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
 if (rosterCount === 0) {
   var seed = db.prepare("INSERT INTO roster (name, position) VALUES (?, ?)");

@@ -376,12 +376,6 @@
         <button class="stamp-btn ghost" id="addNameBtn" type="button">+</button>
       </div>
       <div class="copy-hint" id="rosterMsg"></div>
-      <div class="duty-actions">
-        <button class="stamp-btn" id="copyBtn" type="button" data-i18n="copyBtn"></button>
-        <button class="stamp-btn ghost" id="swapBtn" type="button" data-i18n="swapBtn"></button>
-      </div>
-      <span class="copy-hint" id="copyHint"></span>
-      <textarea id="copyFallback" class="copy-fallback" readonly hidden></textarea>
     </div>
   </section>
 
@@ -397,6 +391,27 @@
       </div>
       <div class="claim-status" id="claimStatus"></div>
       <div class="leaderboard" id="leaderboard"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 data-i18n="notifyHeading"></h2>
+      <div class="section-note" data-i18n="notifyNote"></div>
+    </div>
+    <div class="rewards-card poster poster-c" id="notifyCard">
+      <div class="claim-row">
+        <select class="claim-select" id="notifyNameSelect"></select>
+        <input type="email" class="claim-select" id="notifyEmailInput" data-i18n-placeholder="emailPlaceholder">
+        <select class="claim-select" id="notifyLangSelect"></select>
+        <button class="stamp-btn" id="notifySubscribeBtn" type="button" data-i18n="subscribeBtn"></button>
+      </div>
+      <div class="claim-status" id="notifyStatus"></div>
+      <div class="leaderboard" id="notifyList"></div>
+      <div class="claim-row">
+        <input type="email" class="claim-select" id="unsubEmailInput" data-i18n-placeholder="unsubscribeEmailPlaceholder">
+        <button class="stamp-btn ghost" id="unsubBtn" type="button" data-i18n="unsubscribeBtn"></button>
+      </div>
     </div>
   </section>
 

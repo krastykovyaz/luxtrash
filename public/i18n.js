@@ -64,6 +64,12 @@ window.T = {
     swapMsgFooter: "Whoever can take it, just reply here and I'll owe you one.",
     weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     months: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+    notifyHeading: "Notifications", notifyNote: "Get this week's reminder by email, in your language",
+    emailPlaceholder: "you@example.com", subscribeBtn: "Subscribe", notifySubscribing: "Subscribing…",
+    notifyDone: "Subscribed — you'll get a weekly reminder by email.", notifyFailed: "Couldn't subscribe — try again.",
+    subscribedListNote: "Currently subscribed:", subscribedNone: "Nobody's subscribed yet.",
+    unsubscribeEmailPlaceholder: "Your email", unsubscribeBtn: "Unsubscribe",
+    unsubDone: "Unsubscribed.", unsubFailed: "Couldn't unsubscribe — check the email address.",
     binLabels: { M: "Household", E: "Valorlux", P: "Paper", V: "Glass", B: "Biowaste", R: "Resource Ctr" }
   },
   es: {
@@ -113,6 +119,12 @@ window.T = {
     swapMsgFooter: "Quien pueda, que responda aquí y le debo una.",
     weekdays: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
     months: ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"],
+    notifyHeading: "Notificaciones", notifyNote: "Recibe el recordatorio semanal por correo, en tu idioma",
+    emailPlaceholder: "tucorreo@ejemplo.com", subscribeBtn: "Suscribirse", notifySubscribing: "Suscribiendo…",
+    notifyDone: "Suscrito — recibirás un recordatorio semanal por correo.", notifyFailed: "No se pudo suscribir — inténtalo de nuevo.",
+    subscribedListNote: "Suscritos actualmente:", subscribedNone: "Todavía nadie se ha suscrito.",
+    unsubscribeEmailPlaceholder: "Tu correo", unsubscribeBtn: "Darse de baja",
+    unsubDone: "Baja realizada.", unsubFailed: "No se pudo dar de baja — revisa el correo.",
     binLabels: { M: "Doméstico", E: "Valorlux", P: "Papel", V: "Vidrio", B: "Orgánico", R: "Centro de Recursos" }
   },
   fr: {
@@ -162,6 +174,12 @@ window.T = {
     swapMsgFooter: "Celui ou celle qui peut, répondez ici, je vous revaudrai ça.",
     weekdays: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
     months: ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"],
+    notifyHeading: "Notifications", notifyNote: "Recevez le rappel de la semaine par e-mail, dans votre langue",
+    emailPlaceholder: "vous@exemple.com", subscribeBtn: "S'abonner", notifySubscribing: "Abonnement…",
+    notifyDone: "Abonné — vous recevrez un rappel hebdomadaire par e-mail.", notifyFailed: "Impossible de s'abonner — réessayez.",
+    subscribedListNote: "Abonnés actuels :", subscribedNone: "Personne n'est encore abonné.",
+    unsubscribeEmailPlaceholder: "Votre e-mail", unsubscribeBtn: "Se désabonner",
+    unsubDone: "Désabonnement effectué.", unsubFailed: "Impossible de se désabonner — vérifiez l'e-mail.",
     binLabels: { M: "Ménager", E: "Valorlux", P: "Papier", V: "Verre", B: "Biodéchets", R: "Centre de ressources" }
   },
   pt: {
@@ -211,6 +229,12 @@ window.T = {
     swapMsgFooter: "Quem puder, responda aqui e eu retribuo.",
     weekdays: ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"],
     months: ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
+    notifyHeading: "Notificações", notifyNote: "Receba o lembrete da semana por e-mail, no seu idioma",
+    emailPlaceholder: "voce@exemplo.com", subscribeBtn: "Inscrever-se", notifySubscribing: "Inscrevendo…",
+    notifyDone: "Inscrito — você receberá um lembrete semanal por e-mail.", notifyFailed: "Não foi possível inscrever — tente novamente.",
+    subscribedListNote: "Inscritos atualmente:", subscribedNone: "Ainda ninguém se inscreveu.",
+    unsubscribeEmailPlaceholder: "Seu e-mail", unsubscribeBtn: "Cancelar inscrição",
+    unsubDone: "Inscrição cancelada.", unsubFailed: "Não foi possível cancelar — verifique o e-mail.",
     binLabels: { M: "Doméstico", E: "Valorlux", P: "Papel", V: "Vidro", B: "Orgânico", R: "Centro de Recursos" }
   },
   ru: {
@@ -260,6 +284,12 @@ window.T = {
     swapMsgFooter: "Кто может — ответьте здесь, я в долгу.",
     weekdays: ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
     months: ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"],
+    notifyHeading: "Уведомления", notifyNote: "Получайте напоминание на неделю по почте, на своём языке",
+    emailPlaceholder: "you@example.com", subscribeBtn: "Подписаться", notifySubscribing: "Подписываем…",
+    notifyDone: "Подписка оформлена — вы будете получать еженедельное напоминание по почте.", notifyFailed: "Не удалось подписаться — попробуйте ещё раз.",
+    subscribedListNote: "Сейчас подписаны:", subscribedNone: "Пока никто не подписался.",
+    unsubscribeEmailPlaceholder: "Ваша почта", unsubscribeBtn: "Отписаться",
+    unsubDone: "Подписка отменена.", unsubFailed: "Не удалось отписаться — проверьте адрес почты.",
     binLabels: { M: "Бытовые", E: "Valorlux", P: "Бумага", V: "Стекло", B: "Органика", R: "Центр ресурсов" }
   },
   lb: {
@@ -309,6 +339,12 @@ window.T = {
     swapMsgFooter: "Wien ka soll hei äntweren, ech ginn et zréck.",
     weekdays: ["Méi", "Dën", "Mët", "Don", "Fre", "Sam", "Son"],
     months: ["Januar", "Februar", "Mäerz", "Abrëll", "Mee", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
+    notifyHeading: "Notifikatiounen", notifyNote: "Kritt d'Erënnerung vun der Woch per E-Mail, an Ärer Sprooch",
+    emailPlaceholder: "dir@beispill.com", subscribeBtn: "Abonnéieren", notifySubscribing: "Gëtt abonnéiert…",
+    notifyDone: "Abonnéiert — Dir kritt all Woch eng Erënnerung per E-Mail.", notifyFailed: "Konnt net abonnéiert ginn — probéiert nach eng Kéier.",
+    subscribedListNote: "Am Moment abonnéiert:", subscribedNone: "Nach keen huet sech abonnéiert.",
+    unsubscribeEmailPlaceholder: "Är E-Mail", unsubscribeBtn: "Ofbestellen",
+    unsubDone: "Ofbestallt.", unsubFailed: "Konnt net ofbestallt ginn — kontrolléiert d'E-Mail.",
     binLabels: { M: "Haushaltsofall", E: "Valorlux", P: "Pabeier", V: "Glas", B: "Bio-Offall", R: "Ressourcenzentrum" }
   },
   ja: {
@@ -358,6 +394,12 @@ window.T = {
     swapMsgFooter: "交代できる人はここに返信してください、後でお返しします。",
     weekdays: ["月", "火", "水", "木", "金", "土", "日"],
     months: ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"],
+    notifyHeading: "通知", notifyNote: "今週のリマインダーをあなたの言語でメールで受け取る",
+    emailPlaceholder: "you@example.com", subscribeBtn: "登録する", notifySubscribing: "登録中…",
+    notifyDone: "登録しました ― 毎週メールでリマインダーが届きます。", notifyFailed: "登録できませんでした ― もう一度試してください。",
+    subscribedListNote: "現在登録中:", subscribedNone: "まだ誰も登録していません。",
+    unsubscribeEmailPlaceholder: "あなたのメールアドレス", unsubscribeBtn: "登録解除",
+    unsubDone: "登録を解除しました。", unsubFailed: "解除できませんでした ― メールアドレスを確認してください。",
     binLabels: { M: "家庭ごみ", E: "ヴァロルックス", P: "紙", V: "ガラス", B: "生ごみ", R: "リソースセンター" }
   }
 };

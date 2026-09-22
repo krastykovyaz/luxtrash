@@ -141,6 +141,11 @@
       var val = tr(key);
       if (val != null) el.textContent = val;
     });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+      var key = el.getAttribute("data-i18n-placeholder");
+      var val = tr(key);
+      if (val != null) el.placeholder = val;
+    });
 
     renderLangRow();
     renderBadges(document.getElementById("todayBadges"), codesFor(today));
@@ -153,6 +158,7 @@
     renderLegend();
     renderCalendar();
     renderClaimSelect();
+    renderNotifyForm();
     gameShowItem();
     renderLeaderboard(lastClaims);
   }
@@ -234,9 +240,6 @@
       chip.appendChild(removeBtn);
       rosterStrip.appendChild(chip);
     });
-
-    var hint = document.getElementById("copyHint");
-    hint.textContent = tr("copyHintDefault");
   }
 
   // ---- roster management (add / remove housemates) ----
@@ -249,6 +252,7 @@
     recomputeWeek();
     renderDuty();
     renderClaimSelect();
+    renderNotifyForm();
     loadClaims();
   }
 
@@ -290,58 +294,6 @@
   addNameBtn.addEventListener("click", addToRoster);
   addNameInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); addToRoster(); }
-  });
-
-  function weekLines() {
-    var lines = [];
-    for (var i = 0; i < 7; i++) {
-      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      var c = codesFor(d);
-      if (!c) continue;
-      var label = c === "HOLIDAY" ? tr("publicHolidayShort") :
-        c.split("").map(function (ch) { return BIN_COLOR[ch] ? binLabel(ch) : ""; }).filter(Boolean).join(" + ");
-      lines.push("- " + fmtShort(d) + " " + d.getDate() + ": " + label);
-    }
-    return lines;
-  }
-
-  function copyText(text, hintEl) {
-    var fallback = document.getElementById("copyFallback");
-    var done = function () {
-      hintEl.textContent = tr("copyHintDone");
-      setTimeout(function () { hintEl.textContent = tr("copyHintDefault"); }, 3000);
-    };
-    var showFallback = function () {
-      fallback.value = text;
-      fallback.hidden = false;
-      fallback.focus();
-      try { fallback.select(); } catch (e) {}
-      hintEl.textContent = tr("copyHintFail");
-    };
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, showFallback);
-      } else {
-        showFallback();
-      }
-    } catch (e) {
-      showFallback();
-    }
-  }
-
-  document.getElementById("copyBtn").addEventListener("click", function () {
-    var hint = document.getElementById("copyHint");
-    var lines = [fmt("dutyMsgHeading", {}) + " " + thisWeek.name].concat(weekLines());
-    lines.push(tr("dutyMsgFooter"));
-    copyText(lines.join("\n"), hint);
-  });
-
-  document.getElementById("swapBtn").addEventListener("click", function () {
-    var hint = document.getElementById("copyHint");
-    var mon = mondayOf(today);
-    var lines = [fmt("swapMsgIntro", { name: thisWeek.name, date: mon.getDate() + " " + fmtShort(mon) })].concat(weekLines());
-    lines.push(tr("swapMsgFooter"));
-    copyText(lines.join("\n"), hint);
   });
 
   // ---- sort-it game ----
@@ -680,6 +632,116 @@
 
   claimStatus.textContent = tr("claimChecking");
   loadClaims();
+
+  // ---- email notification subscriptions ----
+  var notifyNameSelect = document.getElementById("notifyNameSelect");
+  var notifyEmailInput = document.getElementById("notifyEmailInput");
+  var notifyLangSelect = document.getElementById("notifyLangSelect");
+  var notifySubscribeBtn = document.getElementById("notifySubscribeBtn");
+  var notifyStatus = document.getElementById("notifyStatus");
+  var notifyList = document.getElementById("notifyList");
+  var unsubEmailInput = document.getElementById("unsubEmailInput");
+  var unsubBtn = document.getElementById("unsubBtn");
+
+  function renderNotifyForm() {
+    var currentName = notifyNameSelect.value;
+    notifyNameSelect.innerHTML = "";
+    ROSTER.forEach(function (name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      notifyNameSelect.appendChild(opt);
+    });
+    notifyNameSelect.value = currentName && ROSTER.includes(currentName) ? currentName : ROSTER[0];
+
+    var currentSubLang = notifyLangSelect.value;
+    notifyLangSelect.innerHTML = "";
+    window.LANGS.forEach(function (l) {
+      var opt = document.createElement("option");
+      opt.value = l.code;
+      opt.textContent = l.name;
+      notifyLangSelect.appendChild(opt);
+    });
+    notifyLangSelect.value = currentSubLang || currentLang;
+  }
+
+  function renderNotifyList(rows) {
+    notifyList.innerHTML = "";
+    if (!rows.length) {
+      var none = document.createElement("div");
+      none.className = "claim-status";
+      none.textContent = tr("subscribedNone");
+      notifyList.appendChild(none);
+      return;
+    }
+    var note = document.createElement("div");
+    note.className = "claim-status";
+    note.textContent = tr("subscribedListNote");
+    notifyList.appendChild(note);
+    rows.forEach(function (row) {
+      var langMeta = window.LANGS.find(function (l) { return l.code === row.language; });
+      var line = document.createElement("div");
+      line.className = "lb-row";
+      var nameSpan = document.createElement("span");
+      nameSpan.className = "lb-name";
+      nameSpan.textContent = row.name;
+      var langSpan = document.createElement("span");
+      langSpan.className = "lb-coins";
+      langSpan.textContent = langMeta ? langMeta.name : row.language;
+      line.appendChild(nameSpan);
+      line.appendChild(langSpan);
+      notifyList.appendChild(line);
+    });
+  }
+
+  function loadSubscribers() {
+    fetch("/api/subscribe")
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(renderNotifyList)
+      .catch(function () {});
+  }
+
+  notifySubscribeBtn.addEventListener("click", function () {
+    notifySubscribeBtn.disabled = true;
+    notifyStatus.textContent = tr("notifySubscribing");
+    fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: notifyNameSelect.value,
+        email: notifyEmailInput.value.trim(),
+        language: notifyLangSelect.value
+      })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        notifyEmailInput.value = "";
+        notifyStatus.textContent = tr("notifyDone");
+        loadSubscribers();
+      })
+      .catch(function (e) { notifyStatus.textContent = e.message || tr("notifyFailed"); })
+      .finally(function () { notifySubscribeBtn.disabled = false; });
+  });
+
+  unsubBtn.addEventListener("click", function () {
+    var email = unsubEmailInput.value.trim();
+    if (!email) return;
+    unsubBtn.disabled = true;
+    fetch("/api/subscribe/" + encodeURIComponent(email), { method: "DELETE" })
+      .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
+      .then(function () {
+        unsubEmailInput.value = "";
+        notifyStatus.textContent = tr("unsubDone");
+        loadSubscribers();
+      })
+      .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
+      .finally(function () { unsubBtn.disabled = false; });
+  });
+
+  loadSubscribers();
 
   // ---- camera check (backend-backed, Gemini) ----
   (function () {

@@ -3,11 +3,17 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const multer = require("multer");
+const cron = require("node-cron");
 const db = require("./db");
 const { checkPhoto } = require("./gemini");
+const { weekKeyOf } = require("./rotation");
+const { sendWeeklyReminders } = require("./mailer");
+const { LANGS } = require("./i18n");
 
 const COINS_PER_CLAIM = 10;
 const MAX_NAME_LENGTH = 40;
+const VALID_LANGS = new Set(LANGS.map((l) => l.code));
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function currentRoster() {
   return db.prepare("SELECT name FROM roster ORDER BY position ASC").all().map(function (r) { return r.name; });
@@ -20,16 +26,6 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }
 });
-
-function pad(n) {
-  return String(n).padStart(2, "0");
-}
-
-function mondayKeyOf(date) {
-  const day = (date.getDay() + 6) % 7;
-  const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate() - day);
-  return `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-}
 
 // --- Camera bin-check (Gemini) ---
 app.post("/api/check", upload.single("photo"), async (req, res) => {
@@ -89,13 +85,43 @@ app.post("/api/claims", (req, res) => {
   if (!name || !currentRoster().includes(name)) {
     return res.status(400).json({ error: "Unknown roster name." });
   }
-  const weekKey = mondayKeyOf(new Date());
+  const weekKey = weekKeyOf(new Date());
   const claimedAt = new Date().toISOString();
   db.prepare(
     "INSERT INTO claims (week_key, name, coins, claimed_at) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT(week_key) DO UPDATE SET name = excluded.name, coins = excluded.coins, claimed_at = excluded.claimed_at"
   ).run(weekKey, name, COINS_PER_CLAIM, claimedAt);
   res.json({ weekKey, name, coins: COINS_PER_CLAIM, claimedAt });
+});
+
+// --- Notification subscriptions ---
+app.get("/api/subscribe", (req, res) => {
+  const rows = db.prepare("SELECT name, language FROM accounts ORDER BY created_at ASC").all();
+  res.json(rows);
+});
+
+app.post("/api/subscribe", (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const language = VALID_LANGS.has(body.language) ? body.language : "en";
+
+  if (!currentRoster().includes(name)) {
+    return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
+  }
+  if (!EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: "That doesn't look like a valid email address." });
+  }
+  db.prepare(
+    "INSERT INTO accounts (email, name, language, created_at) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language"
+  ).run(email, name, language, new Date().toISOString());
+  res.status(201).json({ name, language });
+});
+
+app.delete("/api/subscribe/:email", (req, res) => {
+  db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
+  res.json({ ok: true });
 });
 
 // --- Static frontend ---
@@ -107,4 +133,12 @@ app.listen(PORT, () => {
   if (!process.env.GEMINI_API_KEY) {
     console.warn("GEMINI_API_KEY is not set — the camera check will return a 503 until it is.");
   }
+});
+
+// Weekly reminder email — Mondays at 7:00 server time by default.
+const NOTIFY_CRON = process.env.NOTIFY_CRON || "0 7 * * 1";
+cron.schedule(NOTIFY_CRON, async () => {
+  const result = await sendWeeklyReminders(db, currentRoster());
+  console.log(`Weekly reminder run: sent ${result.sent}, skipped ${result.skipped}` +
+    (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
 });

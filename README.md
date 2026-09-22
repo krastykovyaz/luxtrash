@@ -1,12 +1,13 @@
 # Bin Duty
 
 Household waste-sorting app for the house: what goes out tonight, whose turn it is,
-a sorting quiz, a camera-based bin checker, and a Scrap-coin leaderboard for who
-actually took the bins out.
+a sorting quiz, a camera-based bin checker, a Scrap-coin leaderboard for who
+actually took the bins out, and weekly email reminders in each person's own
+language.
 
 Runs as a small Node/Express server (`server/`) serving a static frontend
-(`public/`), backed by SQLite for the leaderboard and Google Gemini for the
-camera check.
+(`public/`), backed by SQLite for the leaderboard/roster/subscriptions, Google
+Gemini for the camera check, and SMTP for email.
 
 ## Local development
 
@@ -24,6 +25,28 @@ Get a Gemini API key at https://aistudio.google.com/apikey. **Put it directly in
 your own `.env` file** (already gitignored) — never share it in chat, a commit, or
 anywhere else it could leak. `.env` is loaded by `dotenv` and read only server-side;
 it's never sent to the browser.
+
+## Notifications (registration + weekly email)
+
+Anyone on the roster can subscribe on the page itself — pick their name, enter an
+email, pick a language — and a cron job (`node-cron`, Monday 07:00 server time by
+default, `NOTIFY_CRON` in `.env` to change it) emails everyone subscribed their own
+week's schedule, in their own language. There's no password/login: it's a mailing
+list, not an account system, which matches a ~6-person house better than building
+real auth.
+
+**Email needs SMTP credentials**, same rule as the Gemini key: fill in
+`SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` in your own `.env`
+yourself, never in chat. Any SMTP provider works:
+- A transactional-email service (Postmark, Resend, Mailgun, Amazon SES) is the
+  most reliable for more than a couple of recipients and gives you an API-key-style
+  credential rather than a personal password.
+- Gmail SMTP + an [app password](https://myaccount.google.com/apppasswords) works
+  for a small house list, but Gmail throttles/flags anything that looks like bulk
+  mail past a handful of recipients.
+
+Leave the SMTP vars empty and everything else still works — registering just
+won't actually send mail (the server logs a warning once and no-ops).
 
 ## Docker
 
@@ -53,22 +76,20 @@ leaderboard survives container restarts/rebuilds.
 
 ```
 server/
-  index.js     Express app: /api/check (Gemini), /api/claims (SQLite leaderboard)
+  index.js     Express app: /api/check (Gemini), /api/claims, /api/roster,
+               /api/subscribe, plus the weekly cron trigger
   gemini.js    Gemini vision call for the camera bin-checker
-  db.js        SQLite setup
+  mailer.js    Builds and sends the weekly reminder email (SMTP via nodemailer)
+  rotation.js  Collection schedule + duty-rotation math, shared by claims and mail
+  i18n.js      Loads public/i18n.js server-side so email wording matches the app
+  db.js        SQLite setup (claims, roster, accounts tables)
 public/
   index.html   Page structure
-  i18n.js      Language switcher data (10 languages; 5 fully translated so far —
-               zh/hi/bn/ar/ur currently fall back to English, RTL layout works
-               for ar/ur already)
-  app.js       All client logic: game, calendar, duty rotation, rewards, camera check
+  i18n.js      Language data — all 12 languages (English, Spanish, French,
+               Portuguese, Russian, Chinese, Hindi, Bengali, Arabic, Urdu,
+               Luxembourgish, Japanese) fully translated; browser UI defaults to
+               English and remembers a per-device choice via localStorage,
+               independent of each account's own notification-email language
+  app.js       All client logic: game, calendar, duty rotation, roster
+               management, rewards, camera check, notification sign-up
 ```
-
-## What's intentionally not automated here
-
-- **Email reminders**: not wired up, because it would need a mail-sending
-  credential (SMTP password or app password) held somewhere. Don't put one in
-  this repo or its `.env` either, for the same reason `GEMINI_API_KEY` gets a
-  warning above — a checked-in or shared credential is a real exposure risk.
-  A Google Apps Script that sends under your own Google sign-in (no password
-  needed) is the safer route; ask for it again if you want it regenerated.
