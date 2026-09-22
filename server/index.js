@@ -1,6 +1,8 @@
-require("dotenv").config();
-
 const path = require("path");
+// Always load the .env at the repo root, regardless of the process's cwd —
+// relying on dotenv's cwd-relative default silently picks up the wrong file
+// when a process manager (pm2, systemd) starts this from a different directory.
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const express = require("express");
 const multer = require("multer");
 const cron = require("node-cron");

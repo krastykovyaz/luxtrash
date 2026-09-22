@@ -674,6 +674,38 @@ window.GUIDE_T = {
     B: { title: "Biowaste", body: "Food scraps, cooked or raw — even meat and fish — plus coffee grounds, teabags, bread. Brown bin, weekly. Not plastic bags, cat litter, coffee capsules." },
     R: { title: "Bulky, hazardous & special", body: "Furniture, appliances, batteries, light bulbs, textiles, scrap metal, paint. Never curbside — Resource Center or on-request pickup." }
   },
+  es: {
+    M: { title: "Residuos domésticos", body: "Todo lo incinerable que no se puede reciclar — bastoncillos de algodón, arena de gato, papel manchado de comida, papel de aluminio usado. <strong>Contenedor gris</strong>, semanal." },
+    E: { title: "Envases Valorlux", body: "Botellas, tarrinas, bandejas, vasos, bolsas y film de plástico, latas metálicas, envases de bebida de cartón. <strong>Bolsa azul Valorlux</strong>, en la acera, cada dos semanas. No papel de aluminio, no poliestireno." },
+    P: { title: "Papel y cartón", body: "Periódicos, revistas, libros y cartón limpios. <strong>Contenedor azul</strong>, semanal. No envases de bebida de cartón, ni papel graso o encerado." },
+    V: { title: "Vidrio", flagged: true, body: "<strong>Solo</strong> botellas y tarros, vacíos y enjuagados, sin tapa. Contenedor verde, semanal. No vidrio de ventanas, espejos, cerámica, bombillas." },
+    B: { title: "Biorresiduos", body: "Restos de comida, cocinados o crudos — incluso carne y pescado — además de posos de café, bolsitas de té, pan. Contenedor marrón, semanal. No bolsas de plástico, arena de gato, cápsulas de café." },
+    R: { title: "Voluminosos, peligrosos y especiales", body: "Muebles, electrodomésticos, pilas, bombillas, textiles, chatarra, pintura. Nunca en la acera — Centro de Recursos o recogida bajo petición." }
+  },
+  fr: {
+    M: { title: "Déchets ménagers", body: "Tout ce qui est incinérable et non recyclable — cotons-tiges, litière pour chat, papier souillé, papier aluminium usagé. <strong>Poubelle grise</strong>, hebdomadaire." },
+    E: { title: "Emballages Valorlux", body: "Bouteilles, pots, barquettes, gobelets, sacs et film plastique, boîtes métalliques, briques alimentaires. <strong>Sac bleu Valorlux</strong>, au bord de la rue, toutes les deux semaines. Ni papier alu, ni polystyrène." },
+    P: { title: "Papier & carton", body: "Journaux, magazines, livres, carton propres. <strong>Poubelle bleue</strong>, hebdomadaire. Pas de briques alimentaires, ni papier gras ou ciré." },
+    V: { title: "Verre", flagged: true, body: "<strong>Uniquement</strong> bouteilles et bocaux, vidés et rincés, sans couvercle. Poubelle verte, hebdomadaire. Pas de vitres, miroirs, céramique, ampoules." },
+    B: { title: "Biodéchets", body: "Restes alimentaires, cuits ou crus — viande et poisson compris — plus marc de café, sachets de thé, pain. Poubelle brune, hebdomadaire. Pas de sacs plastique, litière, capsules de café." },
+    R: { title: "Encombrants, dangereux et spéciaux", body: "Meubles, électroménager, piles, ampoules, textiles, ferraille, peinture. Jamais au bord de la rue — Centre de Ressources ou collecte sur demande." }
+  },
+  pt: {
+    M: { title: "Lixo doméstico", body: "Tudo o que é incinerável e não reciclável — cotonetes, areia de gato, papel sujo de comida, papel-alumínio usado. <strong>Lixeira cinza</strong>, semanal." },
+    E: { title: "Embalagens Valorlux", body: "Garrafas, potes, bandejas, copos, sacos e filme plástico, latas metálicas, embalagens de bebida em cartão. <strong>Saco azul Valorlux</strong>, na rua, a cada duas semanas. Sem papel-alumínio, sem poliestireno." },
+    P: { title: "Papel e papelão", body: "Jornais, revistas, livros e papelão limpos. <strong>Lixeira azul</strong>, semanal. Sem embalagens de bebida em cartão, papel gorduroso ou encerado." },
+    V: { title: "Vidro", flagged: true, body: "<strong>Apenas</strong> garrafas e potes, vazios e enxaguados, sem tampa. Lixeira verde, semanal. Sem vidro de janela, espelhos, cerâmica, lâmpadas." },
+    B: { title: "Resíduos orgânicos", body: "Restos de comida, cozidos ou crus — inclusive carne e peixe — além de borra de café, saquinhos de chá, pão. Lixeira marrom, semanal. Sem sacos plásticos, areia de gato, cápsulas de café." },
+    R: { title: "Volumosos, perigosos e especiais", body: "Móveis, eletrodomésticos, pilhas, lâmpadas, têxteis, sucata, tinta. Nunca na rua — Centro de Recursos ou coleta sob solicitação." }
+  },
+  ru: {
+    M: { title: "Бытовые отходы", body: "Всё, что можно сжечь и нельзя переработать — ватные палочки, кошачий наполнитель, грязная от еды бумага, использованная фольга. <strong>Серый контейнер</strong>, еженедельно." },
+    E: { title: "Упаковка Valorlux", body: "Пластиковые бутылки, банки, лотки, стаканчики, пакеты и плёнка, металлические банки, картонные упаковки для напитков. <strong>Синий пакет Valorlux</strong>, у обочины, раз в две недели. Не фольга, не пенопласт." },
+    P: { title: "Бумага и картон", body: "Чистые газеты, журналы, книги, картон. <strong>Синий контейнер</strong>, еженедельно. Не картонные упаковки для напитков, не жирная или вощёная бумага." },
+    V: { title: "Стекло", flagged: true, body: "<strong>Только</strong> бутылки и банки, пустые и ополоснутые, без крышки. Зелёный контейнер, еженедельно. Не оконное стекло, зеркала, керамика, лампочки." },
+    B: { title: "Биоотходы", body: "Пищевые остатки, варёные или сырые — включая мясо и рыбу — а также кофейная гуща, чайные пакетики, хлеб. Коричневый контейнер, еженедельно. Не пластиковые пакеты, кошачий наполнитель, кофейные капсулы." },
+    R: { title: "Крупногабаритные, опасные и особые отходы", body: "Мебель, техника, батарейки, лампочки, текстиль, металлолом, краска. Никогда не у обочины — Центр ресурсов или вывоз по запросу." }
+  },
   lb: {
     M: { title: "Haushaltsofall", body: "Alles wat net recycléiert ka ginn — Waddestäbercher, Kaz-Stréi, verschmotzte Pabeier, benotzt Aluminiumsfolie. <strong>Grei Poubelle</strong>, all Woch." },
     E: { title: "Valorlux-Emballagen", body: "Plastiksfläschen, Dëppen, Schuelen, Becheren, Sätz & Folie, Metallbüchsen, Gedrénks-Kartongen. <strong>Blo Valorlux-Sak</strong>, um Strossenrand, all zwou Wochen. Net Folie, net Polystyrol." },

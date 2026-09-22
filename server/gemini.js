@@ -1,4 +1,4 @@
-const MODEL = "gemini-2.0-flash";
+const MODEL = "gemini-2.5-flash";
 
 const PROMPT =
   "You're looking at a photo of one household waste item in a shared house in Luxembourg, " +
@@ -20,7 +20,10 @@ async function checkPhoto(buffer, mimeType) {
     throw err;
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
+  // Auth keys (the current key type — see Google AI Studio's API key docs)
+  // authenticate via the x-goog-api-key header, not the old ?key= query
+  // param used by legacy standard keys.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
   const body = {
     contents: [
       {
@@ -35,7 +38,7 @@ async function checkPhoto(buffer, mimeType) {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(body)
   });
 
