@@ -1430,12 +1430,9 @@
       });
   });
 
-  // ---- "You": who am I, my occupation, my achievements ----
+  // ---- "You": who am I, my achievements ----
   var meSelect = document.getElementById("meSelect");
   var meStatus = document.getElementById("meStatus");
-  var occupationRow = document.getElementById("occupationRow");
-  var occupationInput = document.getElementById("occupationInput");
-  var occupationSaveBtn = document.getElementById("occupationSaveBtn");
 
   function renderMeSelect() {
     var current = ME;
@@ -1452,8 +1449,6 @@
     });
     meSelect.value = current && ROSTER.includes(current) ? current : "";
     if (meSelect.value !== current) setMe(meSelect.value);
-    occupationRow.hidden = !ME;
-    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
   }
@@ -1505,16 +1500,11 @@
       ? (tr("profileSincePrefix") + " " + tr("months")[sinceDate.getMonth()] + " " + sinceDate.getFullYear())
       : (ROSTER_OCCUPATION[ME] || "");
     statStreak.textContent = gBestVal;
-    // Occupation arrives with /api/roster/full, usually after the first
-    // render — fill the field once it's known, but never over a draft.
-    if (!occupationInput.value && ROSTER_OCCUPATION[ME]) occupationInput.value = ROSTER_OCCUPATION[ME];
   }
 
   meSelect.addEventListener("change", function () {
     setMe(meSelect.value);
     profileEditOpen = false; // picking a name collapses the panel
-    occupationRow.hidden = !ME;
-    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
     renderDonateSelect();
@@ -1524,26 +1514,6 @@
     renderTask(currentTask);
     renderNotifyForm();
     loadMySubscription();
-  });
-
-  occupationSaveBtn.addEventListener("click", function () {
-    if (!ME) return;
-    occupationSaveBtn.disabled = true;
-    fetch(api("/api/roster/" + encodeURIComponent(ME)), {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ occupation: occupationInput.value.trim() })
-    })
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
-        return r.json();
-      })
-      .then(function () {
-        meStatus.textContent = tr("occupationSaved");
-        loadRosterFull();
-      })
-      .catch(function (e) { meStatus.textContent = e.message || tr("occupationFailed"); })
-      .finally(function () { occupationSaveBtn.disabled = false; });
   });
 
   // ---- achievements ----

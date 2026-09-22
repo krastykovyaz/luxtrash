@@ -474,7 +474,6 @@
   .me-picker { display: flex; flex-direction: column; gap: 8px; }
   .me-picker .claim-select { align-self: flex-start; }
   .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
-  #occupationRow .eyebrow { margin-bottom: 8px; }
   .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
 
   /* ---- houses ---- */
@@ -726,13 +725,6 @@
         <div class="eyebrow" data-i18n="youHeading"></div>
         <select class="claim-select" id="meSelect"></select>
         <div class="claim-status" id="meStatus"></div>
-      </div>
-      <div id="occupationRow" hidden>
-        <div class="eyebrow" data-i18n="occupationLabel"></div>
-        <div class="claim-row">
-          <input type="text" id="occupationInput" class="claim-select" maxlength="60" data-i18n-placeholder="occupationPlaceholder">
-          <button class="stamp-btn ghost" id="occupationSaveBtn" type="button" data-i18n="occupationSaveBtn"></button>
-        </div>
       </div>
     </div>
     <div>
