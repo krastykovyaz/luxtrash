@@ -23,23 +23,35 @@ function currentRoster() {
 const app = express();
 app.use(express.json());
 
+// Real phone camera photos routinely run 8-15MB — the previous 8MB cap
+// rejected those with a raw Multer error that fell through to Express's
+// default HTML error page instead of JSON, which the frontend couldn't
+// parse and just reported as a generic failure.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 }
+  limits: { fileSize: 20 * 1024 * 1024 }
 });
 
 // --- Camera bin-check (Gemini) ---
-app.post("/api/check", upload.single("photo"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No photo uploaded." });
-  }
-  try {
-    const result = await checkPhoto(req.file.buffer, req.file.mimetype);
-    res.json(result);
-  } catch (err) {
-    const status = err.code === "NO_API_KEY" ? 503 : 502;
-    res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
-  }
+app.post("/api/check", (req, res) => {
+  upload.single("photo")(req, res, async (err) => {
+    if (err) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ error: "That photo is too large (20MB max).", code: "TOO_LARGE" });
+      }
+      return res.status(400).json({ error: err.message, code: "UPLOAD_ERROR" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "No photo uploaded." });
+    }
+    try {
+      const result = await checkPhoto(req.file.buffer, req.file.mimetype);
+      res.json(result);
+    } catch (checkErr) {
+      const status = checkErr.code === "NO_API_KEY" ? 503 : 502;
+      res.status(status).json({ error: checkErr.message, code: checkErr.code || "UNKNOWN" });
+    }
+  });
 });
 
 // --- Roster (housemates) ---

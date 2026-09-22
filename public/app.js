@@ -844,6 +844,7 @@
       fetch("/api/check", { method: "POST", body: formData })
         .then(function (r) {
           if (r.status === 503) throw { code: "NO_API_KEY" };
+          if (r.status === 413) throw { code: "TOO_LARGE" };
           if (!r.ok) throw { code: "SERVER" };
           return r.json();
         })
@@ -856,6 +857,7 @@
         })
         .catch(function (e) {
           if (e && e.code === "NO_API_KEY") renderError(tr("scanUnavailable"));
+          else if (e && e.code === "TOO_LARGE") renderError(tr("scanTooLarge"));
           else renderError(tr("scanFailed"));
         })
         .finally(function () { busy = false; });
