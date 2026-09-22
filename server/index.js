@@ -19,8 +19,9 @@ const db = require("./db");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
-const { getCurrentTask, confirmOut, confirmBack, getLeaderboard } = require("./tasks");
+const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE } = require("./rotation");
+const coins = require("./coins");
 
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
@@ -32,6 +33,12 @@ function currentRoster() {
   // house-mate a week, alphabetically" (what the UI actually says) stays
   // true no matter when someone was added to or removed from the roster.
   return db.prepare("SELECT name FROM roster ORDER BY name COLLATE NOCASE ASC").all().map((r) => r.name);
+}
+
+// Same order, with occupation — a separate route/shape from GET /api/roster
+// so nothing that already expects a plain array of names breaks.
+function currentRosterFull() {
+  return db.prepare("SELECT name, occupation, created_at FROM roster ORDER BY name COLLATE NOCASE ASC").all();
 }
 
 const app = express();
@@ -67,14 +74,22 @@ app.post("/api/check", checkLimiter, (req, res) => {
     }
     try {
       const result = await checkPhoto(req.file.buffer, req.file.mimetype);
-      res.json(result);
+      // "name" is who the browser is currently set as (a local-only, no-login
+      // preference — see the "You" picker) — not sent, not credited, when
+      // nobody's picked who they are.
+      const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+      let unlocked = [];
+      if (name && currentRoster().includes(name)) {
+        unlocked = coins.afterScan(db, name);
+      }
+      res.json({ ...result, unlocked });
     } catch (checkErr) {
       console.error(
         `/api/check failed — mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes, ` +
         `code: ${checkErr.code}, message: ${checkErr.message}` +
         (checkErr.detail ? `, detail: ${checkErr.detail}` : "")
       );
-      const status = checkErr.code === "NO_API_KEY" ? 503 : 502;
+      const status = (checkErr.code === "NO_API_KEY" || checkErr.code === "GEMINI_BUSY") ? 503 : 502;
       res.status(status).json({ error: checkErr.message, code: checkErr.code || "UNKNOWN" });
     }
   });
@@ -118,6 +133,26 @@ app.get("/api/roster", (req, res) => {
   res.json(currentRoster());
 });
 
+app.get("/api/roster/full", (req, res) => {
+  res.json(currentRosterFull());
+});
+
+const MAX_OCCUPATION_LENGTH = 60;
+
+app.patch("/api/roster/:name", writeLimiter, (req, res) => {
+  const roster = currentRoster();
+  if (!roster.includes(req.params.name)) {
+    return res.status(404).json({ error: "That name isn't on the roster." });
+  }
+  const raw = req.body && req.body.occupation;
+  const occupation = typeof raw === "string" ? raw.trim().slice(0, MAX_OCCUPATION_LENGTH) : "";
+  if (occupation && UNSAFE_NAME_CHARS.test(occupation)) {
+    return res.status(400).json({ error: "Occupation can't contain <, >, &, quotes, or control characters." });
+  }
+  db.prepare("UPDATE roster SET occupation = ? WHERE name = ?").run(occupation || null, req.params.name);
+  res.json(currentRosterFull());
+});
+
 app.post("/api/roster", writeLimiter, (req, res) => {
   const raw = req.body && req.body.name;
   const name = typeof raw === "string" ? raw.trim() : "";
@@ -135,7 +170,7 @@ app.post("/api/roster", writeLimiter, (req, res) => {
     return res.status(409).json({ error: "That name is already on the roster." });
   }
   const nextPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
-  db.prepare("INSERT INTO roster (name, position) VALUES (?, ?)").run(name, nextPos);
+  db.prepare("INSERT INTO roster (name, position, created_at) VALUES (?, ?, ?)").run(name, nextPos, new Date().toISOString());
   res.status(201).json(currentRoster());
 });
 
@@ -166,14 +201,113 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
 app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
   const name = req.body && req.body.name;
   try {
-    res.json(confirmBack(db, req.params.dateKey, currentRoster(), name));
+    const row = confirmBack(db, req.params.dateKey, currentRoster(), name);
+    // Coins go to whoever took the bin OUT (matches how the leaderboard has
+    // always credited a task — see coin_ledger's backfill in db.js), not
+    // necessarily whoever confirmed it back, since those can be different
+    // people.
+    const unlocked = row.out_by ? coins.afterTaskCompleted(db, row.out_by) : [];
+    res.json({ ...row, unlocked });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 app.get("/api/tasks/leaderboard", (req, res) => {
-  res.json(getLeaderboard(db));
+  res.json(coins.getLeaderboard(db));
+});
+
+// --- Scrap coins: balance/history/achievements for one person, donations,
+// and the Sort It quiz's perfect-round bonus ---
+app.get("/api/coins/:name", (req, res) => {
+  const name = req.params.name;
+  if (!currentRoster().includes(name)) {
+    return res.status(404).json({ error: "That name isn't on the roster." });
+  }
+  const turnsRow = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE out_by = ? AND back_at IS NOT NULL").get(name);
+  res.json({
+    name,
+    balance: coins.getBalance(db, name),
+    history: coins.getHistory(db, name, 20),
+    achievements: coins.getAchievements(db, name),
+    turnsTaken: turnsRow.n
+  });
+});
+
+app.post("/api/coins/donate", writeLimiter, (req, res) => {
+  const body = req.body || {};
+  const from = typeof body.from === "string" ? body.from.trim() : "";
+  const to = typeof body.to === "string" ? body.to.trim() : "";
+  const amount = Number(body.amount);
+  const roster = currentRoster();
+  if (!roster.includes(from) || !roster.includes(to)) {
+    return res.status(400).json({ error: "Pick two names that are on the roster." });
+  }
+  if (from === to) {
+    return res.status(400).json({ error: "Pick someone else to give coins to." });
+  }
+  if (!Number.isInteger(amount) || amount <= 0 || amount > 1000) {
+    return res.status(400).json({ error: "Amount has to be a whole number between 1 and 1000." });
+  }
+  try {
+    const unlocked = coins.donate(db, from, to, amount);
+    res.json({ ok: true, balance: coins.getBalance(db, from), unlocked });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Sort It is otherwise entirely client-side (see public/app.js) — this is
+// the one moment it touches the server, and only when the house member has
+// picked who they are locally. A perfect round pays out once; nothing stops
+// someone re-running easy rounds for coins beyond "it isn't very many
+// coins" — same trust model as the rest of this app.
+app.post("/api/quiz/complete", writeLimiter, (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const correct = Number(body.correct);
+  const total = Number(body.total);
+  if (!currentRoster().includes(name)) {
+    return res.status(400).json({ error: "That name isn't on the roster." });
+  }
+  if (!Number.isInteger(correct) || !Number.isInteger(total) || total <= 0 || correct > total) {
+    return res.status(400).json({ error: "That doesn't look like a real round result." });
+  }
+  if (correct < total) {
+    return res.json({ awarded: false, unlocked: [] });
+  }
+  const unlocked = coins.afterPerfectRound(db, name);
+  res.json({ awarded: true, unlocked, balance: coins.getBalance(db, name) });
+});
+
+// --- Reactions on tonight's task (heart / thumbs up / thumbs down) ---
+const REACTION_EMOJI = new Set(["heart", "up", "down"]);
+
+app.get("/api/reactions/:dateKey", (req, res) => {
+  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const counts = { heart: 0, up: 0, down: 0 };
+  rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
+  res.json({ counts, mine: {} , rows });
+});
+
+app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const emoji = body.emoji;
+  if (!currentRoster().includes(name)) {
+    return res.status(400).json({ error: "That name isn't on the roster." });
+  }
+  if (!REACTION_EMOJI.has(emoji)) {
+    return res.status(400).json({ error: "Unknown reaction." });
+  }
+  db.prepare(
+    "INSERT INTO reactions (date_key, name, emoji, created_at) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT(date_key, name) DO UPDATE SET emoji = excluded.emoji, created_at = excluded.created_at"
+  ).run(req.params.dateKey, name, emoji, new Date().toISOString());
+  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const counts = { heart: 0, up: 0, down: 0 };
+  rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
+  res.json({ counts, rows });
 });
 
 // --- Notification subscriptions (double opt-in) ---
@@ -214,12 +348,53 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
 });
 
 app.get("/api/subscribe/confirm/:token", (req, res) => {
-  const row = db.prepare("SELECT email FROM accounts WHERE confirm_token = ?").get(req.params.token);
+  const row = db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
   if (!row) {
     return res.status(404).send("<p>That confirmation link is invalid or already used. Close this tab and subscribe again from Bin Duty.</p>");
   }
   db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
-  res.send("<p>Confirmed — you'll get an email the evening before bin duty, plus a heads-up on who's up next week. You can close this tab.</p>");
+  // One-time signup bonus — guarded so re-subscribing under a new email
+  // later doesn't pay out twice for the same person.
+  let bonusLine = "";
+  if (currentRoster().includes(row.name)) {
+    const already = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(row.name);
+    if (!already) {
+      coins.afterSubscribe(db, row.name);
+      bonusLine = " You've also earned +10 Scrap coins for subscribing.";
+    }
+  }
+  res.send(`<p>Confirmed — you'll get an email the evening before bin duty, plus a heads-up on who's up next week.${bonusLine} You can close this tab.</p>`);
+});
+
+// The "You" screen's view of one person's own subscription. The address is
+// masked (j•••@house.lu) so the roster's emails aren't readable house-wide;
+// unsubscribing by name below means nobody has to type it back in either.
+function maskEmail(email) {
+  const at = email.indexOf("@");
+  if (at < 1) return email;
+  return email[0] + "•••" + email.slice(at);
+}
+
+app.get("/api/subscribe/status/:name", (req, res) => {
+  const name = req.params.name;
+  if (!currentRoster().includes(name)) {
+    return res.status(404).json({ error: "That name isn't on the roster." });
+  }
+  const row = db.prepare(
+    "SELECT email, language FROM accounts WHERE name = ? AND confirmed = 1 ORDER BY created_at DESC LIMIT 1"
+  ).get(name);
+  const bonus = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(name);
+  res.json({
+    subscribed: !!row,
+    email: row ? maskEmail(row.email) : null,
+    language: row ? row.language : null,
+    bonusAwarded: !!bonus
+  });
+});
+
+app.delete("/api/subscribe/by-name/:name", writeLimiter, (req, res) => {
+  db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
+  res.json({ ok: true });
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {

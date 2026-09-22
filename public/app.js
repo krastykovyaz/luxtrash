@@ -31,9 +31,39 @@
   ];
 
   var ROSTER = []; // loaded from /api/roster before first render
+  var ROSTER_OCCUPATION = {}; // name -> occupation string, loaded from /api/roster/full
+  var ROSTER_CREATED_AT = {}; // name -> ISO date string, loaded from /api/roster/full (only known for names added after this shipped)
   var subscribedNames = {}; // name -> true, refreshed by loadSubscribers()
   var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F", "#63C7A6", "#C77DBB"];
   var ANCHOR_MONDAY = new Date(2026, 8, 21);
+
+  // ---- "who am I" — a local-only preference, not an account. There is no
+  // login anywhere in this app; this is exactly the same kind of choice as
+  // the language picker (stored in this browser, nothing sent anywhere
+  // until it's used to attribute a scan, a reaction, a donation, or a
+  // quiz round to a name already on the shared roster). ----
+  var ME = "";
+  (function initMe() {
+    try {
+      var saved = localStorage.getItem("binDutyMe");
+      if (saved) ME = saved;
+    } catch (e) {}
+  })();
+  function setMe(name) {
+    ME = name || "";
+    try {
+      if (ME) localStorage.setItem("binDutyMe", ME);
+      else localStorage.removeItem("binDutyMe");
+    } catch (e) {}
+  }
+
+  var ACHIEVEMENT_META = {
+    first_scrap: { icon: "\u{1F4F7}" },
+    perfect_round: { icon: "⭐" },
+    on_time_streak: { icon: "⚡" },
+    house_hero: { icon: "\u{1F3C6}" },
+    generous_scrapper: { icon: "❤️" }
+  };
 
   // ---- i18n ----
   var currentLang = "en";
@@ -57,6 +87,13 @@
     var dict = window.T[currentLang] || window.T.en;
     var labels = (dict && dict.binLabels) || window.T.en.binLabels;
     return labels[code] || code;
+  }
+  // Short labels for the six answer pills (they sit in one row); falls back
+  // to the full name in languages that haven't got the short set yet.
+  function binShort(code) {
+    var dict = window.T[currentLang] || window.T.en;
+    var shorts = (dict && dict.binShort) || window.T.en.binShort || {};
+    return shorts[code] || binLabel(code);
   }
   function guideFor(code) {
     var g = (window.GUIDE_T[currentLang] && window.GUIDE_T[currentLang][code]) || window.GUIDE_T.en[code];
@@ -127,6 +164,62 @@
     langSelect.value = currentLang;
   }
 
+  // ---- tabbed views (phone width) — every [data-view] section stays in
+  // the DOM always; only the active one is un-hidden. Wide screens ignore
+  // this entirely via CSS (see index.html's @media (min-width:900px)) and
+  // show every view at once, so this never runs there in any way that
+  // matters visually. ----
+  var VIEWS = ["home", "roster", "rewards", "you"];
+  var currentView = "home";
+  (function initView() {
+    try {
+      var saved = localStorage.getItem("binDutyView");
+      if (saved && VIEWS.indexOf(saved) !== -1) currentView = saved;
+    } catch (e) {}
+  })();
+  // ---- Home sub-views: Scan and Sort It are launched full-screen from
+  // Home's buttons rather than always sitting inline on the dashboard.
+  // All three (dashboard/scan/sortit) carry data-view="home", so the tab
+  // switcher above already hides/shows them together as a group — this
+  // just decides which ONE of the three is active while home is showing. ----
+  var homeDashboard = document.getElementById("homeDashboard");
+  var scanSubview = document.getElementById("scanSubview");
+  var sortItSubview = document.getElementById("sortItSubview");
+  function showHomeSubview(which) {
+    homeDashboard.hidden = which !== "dashboard";
+    scanSubview.hidden = which !== "scan";
+    sortItSubview.hidden = which !== "sortit";
+    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  }
+  document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
+  document.getElementById("sortItLaunchBtn").addEventListener("click", function () { showHomeSubview("sortit"); });
+  document.getElementById("scanBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
+  document.getElementById("sortItBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
+
+  function showView(view) {
+    if (VIEWS.indexOf(view) === -1) view = "home";
+    currentView = view;
+    try { localStorage.setItem("binDutyView", view); } catch (e) {}
+    document.querySelectorAll("[data-view]").forEach(function (el) {
+      el.hidden = el.getAttribute("data-view") !== view;
+    });
+    document.querySelectorAll(".tab-btn").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-goto") === view);
+    });
+    // Reaching Home (from any route — a tab click, or a jump button like
+    // "Full calendar" on another tab) always lands on its dashboard, never
+    // wherever a Scan/Sort It sub-view was left open.
+    if (view === "home") showHomeSubview("dashboard");
+    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  }
+  document.querySelectorAll(".tab-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () { showView(btn.getAttribute("data-goto")); });
+  });
+  showView(currentView);
+
+  document.getElementById("fullCalendarJumpBtn").addEventListener("click", function () { showView("roster"); });
+  document.getElementById("rewardsJumpBtn").addEventListener("click", function () { showView("rewards"); });
+
   function applyLang() {
     var meta = window.LANGS.find(function (l) { return l.code === currentLang; }) || window.LANGS[0];
     document.documentElement.setAttribute("dir", meta.dir);
@@ -145,18 +238,12 @@
     });
 
     renderLangRow();
-    renderBadges(document.getElementById("todayBadges"), codesFor(today));
-    renderBadges(document.getElementById("tomorrowBadges"), codesFor(tomorrow));
-    document.getElementById("todayDate").textContent = fmtLong(today);
-    document.getElementById("tomorrowDate").textContent = fmtLong(tomorrow);
-    var outOfRangeEl = document.getElementById("outOfRangeNote");
-    if (Object.keys(SCHEDULE).length && !SCHEDULE[monthKey(today)]) {
-      outOfRangeEl.textContent = tr("outOfRange");
-      outOfRangeEl.hidden = false;
-    } else {
-      outOfRangeEl.hidden = true;
+    var todayLabelEl = document.getElementById("todayLabel");
+    if (todayLabelEl) {
+      todayLabelEl.textContent = fmtShort(today) + " · " + String(tr("months")[today.getMonth()]).slice(0, 3) + " " + today.getDate();
     }
     renderWeekStrip();
+    renderThisWeek();
     renderDuty();
     renderGuide();
     renderLegend();
@@ -167,6 +254,11 @@
     gameShowItem();
     loadLeaderboard();
     loadSubscribers();
+    loadMySubscription();
+    renderMeSelect();
+    renderDonateSelect();
+    loadAchievements();
+    loadReactions();
   }
 
   function renderBadges(container, codes) {
@@ -198,6 +290,7 @@
   // ---- week strip ----
   function renderWeekStrip() {
     var strip = document.getElementById("weekStrip");
+    if (!strip) return;
     strip.innerHTML = "";
     for (var i = 0; i < 7; i++) {
       var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
@@ -218,20 +311,218 @@
     }
   }
 
+  // ---- "This week" on Home: only the days in the next 7 that actually have
+  // a collection, one compact row each (the full 7-day strip lives on the
+  // Roster tab) ----
+  function renderThisWeek() {
+    var list = document.getElementById("thisWeekList");
+    if (!list) return;
+    list.innerHTML = "";
+    var shown = 0;
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      var codes = codesFor(d);
+      if (!codes) continue;
+      var row = document.createElement("div");
+      row.className = "this-week-row";
+      var dateEl = document.createElement("span");
+      dateEl.className = "tw-date";
+      dateEl.textContent = fmtShort(d) + " " + d.getDate();
+      row.appendChild(dateEl);
+      var badges = document.createElement("span");
+      badges.className = "badge-row";
+      if (codes === "HOLIDAY") {
+        var h = document.createElement("span");
+        h.className = "holiday-note";
+        h.style.fontSize = "11px";
+        h.textContent = tr("publicHoliday");
+        badges.appendChild(h);
+      } else {
+        codes.split("").forEach(function (c) {
+          if (!BIN_COLOR[c]) return;
+          var b = document.createElement("span");
+          b.className = "badge";
+          b.style.background = BIN_COLOR[c];
+          b.textContent = binLabel(c);
+          badges.appendChild(b);
+        });
+      }
+      row.appendChild(badges);
+      var rel = document.createElement("span");
+      rel.className = "tw-rel";
+      if (i === 0) rel.textContent = tr("relToday");
+      else if (i === 1) { rel.textContent = tr("relTonight"); rel.classList.add("tonight"); }
+      else rel.textContent = fmt("relInDays", { n: i });
+      row.appendChild(rel);
+      list.appendChild(row);
+      shown++;
+    }
+    if (!shown) {
+      var none = document.createElement("div");
+      none.className = "this-week-empty";
+      none.textContent = tr("thisWeekEmpty");
+      list.appendChild(none);
+    }
+  }
+
   // ---- duty ----
   function renderDuty() {
-    var avatar = document.getElementById("dutyAvatar");
-    avatar.style.background = AVATAR_COLORS[thisWeek.idx % AVATAR_COLORS.length];
-    avatar.textContent = initials(thisWeek.name);
     document.getElementById("dutyName").textContent = thisWeek.name;
-    var dutyNextEl = document.getElementById("dutyNext");
-    dutyNextEl.textContent = fmt("nextWeekLabel", {}) + " ";
-    var dutyNextName = document.createElement("b");
-    dutyNextName.textContent = nextWeek.name;
-    dutyNextEl.appendChild(dutyNextName);
+    renderWeekBadges();
+    renderUpcoming();
+    renderRotationList(document.getElementById("rosterStrip"));
+    renderRosterAvatars(document.getElementById("rosterStripHome"));
+  }
 
-    var rosterStrip = document.getElementById("rosterStrip");
-    rosterStrip.innerHTML = "";
+  function solidBadge(code) {
+    var b = document.createElement("span");
+    b.className = "badge";
+    b.style.background = BIN_COLOR[code];
+    b.textContent = binLabel(code);
+    return b;
+  }
+
+  // Every bin type collected at some point this week (Mon–Sun), once each.
+  function renderWeekBadges() {
+    var el = document.getElementById("weekBadges");
+    if (!el) return;
+    el.innerHTML = "";
+    var mon = mondayOf(today);
+    var seen = {};
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i);
+      var codes = codesFor(d);
+      if (!codes || codes === "HOLIDAY") continue;
+      codes.split("").forEach(function (c) {
+        if (BIN_COLOR[c] && !seen[c]) { seen[c] = true; el.appendChild(solidBadge(c)); }
+      });
+    }
+    if (!el.children.length) {
+      var n = document.createElement("span");
+      n.className = "none";
+      n.textContent = tr("nothingScheduled");
+      el.appendChild(n);
+    }
+  }
+
+  // The next three collection days, looking up to three weeks ahead.
+  function renderUpcoming() {
+    var list = document.getElementById("upcomingList");
+    if (!list) return;
+    list.innerHTML = "";
+    var shown = 0;
+    for (var i = 0; i < 21 && shown < 3; i++) {
+      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      var codes = codesFor(d);
+      if (!codes || codes === "HOLIDAY") continue;
+      var row = document.createElement("div");
+      row.className = "poster upcoming-row";
+      var tile = document.createElement("div");
+      tile.className = "date-tile";
+      var dow = document.createElement("div");
+      dow.className = "dt-dow";
+      dow.textContent = fmtShort(d);
+      var num = document.createElement("div");
+      num.className = "dt-num";
+      num.textContent = d.getDate();
+      tile.appendChild(dow);
+      tile.appendChild(num);
+      row.appendChild(tile);
+      var badges = document.createElement("span");
+      badges.className = "badge-row";
+      codes.split("").forEach(function (c) { if (BIN_COLOR[c]) badges.appendChild(solidBadge(c)); });
+      row.appendChild(badges);
+      var rel = document.createElement("span");
+      rel.className = "up-rel";
+      if (i === 0) rel.textContent = tr("relToday");
+      else if (i === 1) { rel.textContent = tr("relTonight"); rel.classList.add("tonight"); }
+      else rel.textContent = fmt("relInDays", { n: i });
+      row.appendChild(rel);
+      list.appendChild(row);
+      shown++;
+    }
+    if (!shown) {
+      var none = document.createElement("div");
+      none.className = "upcoming-empty";
+      none.textContent = tr("thisWeekEmpty");
+      list.appendChild(none);
+    }
+  }
+
+  // Everyone, starting from whoever has this week, in the order their
+  // turns come up — with the remove control kept per row.
+  function renderRotationList(container) {
+    if (!container) return;
+    container.innerHTML = "";
+    var n = ROSTER.length;
+    for (var k = 0; k < n; k++) {
+      var name = ROSTER[(thisWeek.idx + k) % n];
+      var row = document.createElement("div");
+      row.className = "poster rotation-row" + (subscribedNames[name] ? " subscribed" : "");
+      var av = document.createElement("span");
+      av.className = "avatar";
+      av.textContent = initials(name);
+      if (subscribedNames[name]) av.title = tr("subscribedBadge");
+      row.appendChild(av);
+      var text = document.createElement("div");
+      text.className = "rr-text";
+      var nm = document.createElement("div");
+      nm.className = "rr-name";
+      nm.textContent = name;
+      text.appendChild(nm);
+      if (ROSTER_OCCUPATION[name]) {
+        var occ = document.createElement("div");
+        occ.className = "rr-occ";
+        occ.textContent = ROSTER_OCCUPATION[name];
+        text.appendChild(occ);
+      }
+      row.appendChild(text);
+      var when = document.createElement("span");
+      when.className = "rr-when";
+      when.textContent = k === 0 ? tr("relThisWeek") : k === 1 ? tr("relNextWeek") : fmt("relInWeeks", { n: k });
+      row.appendChild(when);
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "chip-remove";
+      removeBtn.setAttribute("aria-label", "Remove " + name);
+      removeBtn.textContent = "×";
+      removeBtn.addEventListener("click", (function (nm2) { return function () { removeFromRoster(nm2); }; })(name));
+      row.appendChild(removeBtn);
+      container.appendChild(row);
+    }
+  }
+
+  // Home's compact roster: a circle per person with the name (and
+  // occupation, when set) stacked underneath — read-only; adding/removing
+  // people stays on the Roster tab.
+  function renderRosterAvatars(container) {
+    if (!container) return;
+    container.innerHTML = "";
+    ROSTER.forEach(function (name) {
+      var person = document.createElement("div");
+      person.className = "roster-person" + (subscribedNames[name] ? " subscribed" : "");
+      var av = document.createElement("span");
+      av.className = "avatar";
+      av.textContent = initials(name);
+      if (subscribedNames[name]) av.title = tr("subscribedBadge");
+      person.appendChild(av);
+      var nm = document.createElement("div");
+      nm.className = "rp-name";
+      nm.textContent = name;
+      person.appendChild(nm);
+      if (ROSTER_OCCUPATION[name]) {
+        var occ = document.createElement("div");
+        occ.className = "rp-occ";
+        occ.textContent = ROSTER_OCCUPATION[name];
+        person.appendChild(occ);
+      }
+      container.appendChild(person);
+    });
+  }
+
+  function renderRosterStrip(container, withRemove) {
+    if (!container) return;
+    container.innerHTML = "";
     ROSTER.forEach(function (name, idx) {
       var chip = document.createElement("span");
       chip.className = "roster-chip" + (subscribedNames[name] ? " subscribed" : "");
@@ -241,15 +532,25 @@
       av.textContent = initials(name);
       if (subscribedNames[name]) av.title = tr("subscribedBadge");
       chip.appendChild(av);
-      chip.appendChild(document.createTextNode(name));
-      var removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "chip-remove";
-      removeBtn.setAttribute("aria-label", "Remove " + name);
-      removeBtn.textContent = "×";
-      removeBtn.addEventListener("click", function () { removeFromRoster(name); });
-      chip.appendChild(removeBtn);
-      rosterStrip.appendChild(chip);
+      var nameWrap = document.createElement("span");
+      nameWrap.appendChild(document.createTextNode(name));
+      if (ROSTER_OCCUPATION[name]) {
+        var occ = document.createElement("span");
+        occ.className = "chip-occupation";
+        occ.textContent = " · " + ROSTER_OCCUPATION[name];
+        nameWrap.appendChild(occ);
+      }
+      chip.appendChild(nameWrap);
+      if (withRemove) {
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "chip-remove";
+        removeBtn.setAttribute("aria-label", "Remove " + name);
+        removeBtn.textContent = "×";
+        removeBtn.addEventListener("click", function () { removeFromRoster(name); });
+        chip.appendChild(removeBtn);
+      }
+      container.appendChild(chip);
     });
   }
 
@@ -257,6 +558,22 @@
   var rosterMsg = document.getElementById("rosterMsg");
   var addNameInput = document.getElementById("addNameInput");
   var addNameBtn = document.getElementById("addNameBtn");
+
+  function loadRosterFull() {
+    return fetch("/api/roster/full")
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (rows) {
+        ROSTER_OCCUPATION = {};
+        ROSTER_CREATED_AT = {};
+        rows.forEach(function (row) {
+          if (row.occupation) ROSTER_OCCUPATION[row.name] = row.occupation;
+          if (row.created_at) ROSTER_CREATED_AT[row.name] = row.created_at;
+        });
+        renderDuty();
+        renderProfileHead();
+      })
+      .catch(function () {});
+  }
 
   function afterRosterChange(newRoster) {
     ROSTER = newRoster;
@@ -266,6 +583,9 @@
     renderNotifyForm();
     loadTask();
     loadLeaderboard();
+    loadRosterFull();
+    renderMeSelect();
+    renderDonateSelect();
   }
 
   function addToRoster() {
@@ -318,7 +638,7 @@
   var gFeedbackEl = document.getElementById("gFeedback");
   var gProgressEl = document.getElementById("gProgress");
   var gNextBtn = document.getElementById("gNextBtn");
-  var gQueue = [], gIndex = 0, gScoreVal = 0, gStreakVal = 0, gBestVal = 0, gAnswered = false;
+  var gQueue = [], gIndex = 0, gScoreVal = 0, gStreakVal = 0, gBestVal = 0, gAnswered = false, gRoundReported = false;
   var gButtonsByCode = {};
 
   try { gBestVal = parseInt(localStorage.getItem("binDutyBestStreak") || "0", 10) || 0; } catch (e) { gBestVal = 0; }
@@ -337,7 +657,8 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "bin-btn";
-    btn.innerHTML = '<span class="dot" style="background:' + BIN_COLOR[code] + '"></span><span class="bin-btn-label"></span>';
+    btn.style.background = BIN_COLOR[code];
+    btn.innerHTML = '<span class="bin-btn-label"></span>';
     btn.addEventListener("click", function () { gameAnswer(code, btn); });
     gBinsEl.appendChild(btn);
     gButtonsByCode[code] = btn;
@@ -348,7 +669,7 @@
       var btn = gButtonsByCode[code];
       btn.disabled = false;
       btn.classList.remove("pick-correct", "pick-wrong");
-      btn.querySelector(".bin-btn-label").textContent = binLabel(code);
+      btn.querySelector(".bin-btn-label").textContent = binShort(code);
     });
   }
 
@@ -367,14 +688,27 @@
       gNextBtn.textContent = tr("playAgain");
       gNextBtn.disabled = false;
       gFeedbackEl.textContent = gScoreVal === gQueue.length ? tr("perfectRound") : tr("solidRound");
+      if (gScoreVal === gQueue.length && ME && !gRoundReported) {
+        gRoundReported = true;
+        fetch("/api/quiz/complete", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: ME, correct: gScoreVal, total: gQueue.length })
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) { if (data && data.awarded) celebrateAchievements(data.unlocked); })
+          .catch(function () {});
+      }
       return;
     }
 
     gBinsEl.style.display = "";
-    document.getElementById("gEyebrow").textContent = tr("whereGoes");
+    document.getElementById("gEyebrow").textContent = tr("tapRightBin");
     gNextBtn.textContent = tr("next");
     gNameEl.textContent = gQueue[gIndex].name;
-    gProgressEl.textContent = fmt("itemProgress", { n: gIndex + 1, total: gQueue.length });
+    gProgressEl.textContent = fmt("quizProgress", { n: gIndex + 1, total: gQueue.length });
+    var bar = document.getElementById("gBar");
+    if (bar) bar.style.width = Math.round((gIndex / gQueue.length) * 100) + "%";
   }
 
   function gameAnswer(code, btn) {
@@ -390,6 +724,7 @@
       if (gStreakVal > gBestVal) {
         gBestVal = gStreakVal; gBest.textContent = gBestVal;
         try { localStorage.setItem("binDutyBestStreak", String(gBestVal)); } catch (e) {}
+        if (statStreak) statStreak.textContent = gBestVal;
       }
       btn.classList.add("pick-correct");
       gItemEl.classList.add("correct", "pulse");
@@ -410,7 +745,7 @@
   gNextBtn.addEventListener("click", function () {
     if (gIndex >= gQueue.length) {
       gQueue = shuffle(ITEMS);
-      gIndex = 0; gScoreVal = 0; gStreakVal = 0;
+      gIndex = 0; gScoreVal = 0; gStreakVal = 0; gRoundReported = false;
       gScore.textContent = "0"; gStreak.textContent = "0";
       gameShowItem();
       return;
@@ -430,9 +765,9 @@
       var card = document.createElement("div");
       card.className = "guide-card" + (g.flagged ? " flagged" : "");
       card.innerHTML =
-        '<div class="guide-head"><span class="guide-letter" style="background:' + BIN_COLOR[code] + '">' + code + '</span>' +
-        '<span class="guide-title">' + g.title + '</span></div>' +
-        '<div class="guide-body">' + g.body + '</div>';
+        '<span class="guide-letter" style="background:' + BIN_COLOR[code] + '"></span>' +
+        '<div><span class="guide-title">' + code + ' · ' + g.title + '</span> ' +
+        '<span class="guide-body" style="display:inline;">' + g.body + '</span></div>';
       grid.appendChild(card);
     });
     var vn = document.getElementById("verifyNote");
@@ -557,27 +892,102 @@
 
   function renderTask(task) {
     currentTask = task;
+    var homeDutyAvatar = document.getElementById("homeDutyAvatar");
+    var homeHero = document.getElementById("homeHero");
+    var reactionsRowEl = document.getElementById("reactionsRow");
     if (!task) {
-      taskDateLabel.textContent = "";
-      taskBadges.innerHTML = "";
-      outRow.hidden = true;
+      // Nothing is open right now (today's collection is done, or its window
+      // hasn't opened) — show the NEXT collection instead of an empty card,
+      // with the button disabled until its window opens the evening before.
+      // Reactions are only for a live task, so they stay hidden here.
+      var next = null, nextOffset = 0;
+      for (var i = 1; i <= 60; i++) {
+        var cand = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+        var cc = codesFor(cand);
+        if (cc && cc !== "HOLIDAY") { next = cand; nextOffset = i; break; }
+      }
       backRow.hidden = true;
-      claimStatus.textContent = tr("taskNothing");
+      reactionsRowEl.hidden = true;
+      if (!next) {
+        taskDateLabel.textContent = "";
+        taskBadges.innerHTML = "";
+        outRow.hidden = true;
+        claimStatus.textContent = tr("taskNothing");
+        homeDutyAvatar.hidden = true;
+        homeHero.classList.add("no-task");
+        return;
+      }
+      homeHero.classList.remove("no-task");
+      taskDateLabel.textContent = nextOffset === 1 ? tr("tonightBinsLabel") : fmtLong(next);
+      renderBadges(taskBadges, codesFor(next));
+      var who = personForWeek(next).name;
+      homeDutyAvatar.hidden = false;
+      homeDutyAvatar.textContent = initials(who);
+      claimStatus.innerHTML = "";
+      var upParts = fmt(nextOffset === 1 ? "dutyTonight" : "dutyUpcoming", { name: who }).split(who);
+      claimStatus.appendChild(document.createTextNode(upParts[0]));
+      var upStrong = document.createElement("strong");
+      upStrong.textContent = who;
+      claimStatus.appendChild(upStrong);
+      claimStatus.appendChild(document.createTextNode(upParts[1] || ""));
+      var opens = new Date(next.getFullYear(), next.getMonth(), next.getDate() - 1);
+      outRow.hidden = false;
+      outNameSelect.hidden = true;
+      outBtn.disabled = true;
+      outBtn.textContent = fmt("opensLater", { date: fmtShort(opens) + " " + opens.getDate() });
       return;
     }
+    homeHero.classList.remove("no-task");
+    outBtn.disabled = false;
+    outBtn.textContent = tr("confirmOutBtn");
+    reactionsRowEl.hidden = false;
+    loadReactions();
 
     var date = new Date(task.date_key + "T00:00:00");
-    taskDateLabel.textContent = fmtLong(date);
+    // The mockup's "TONIGHT'S BINS" eyebrow, but only when that's literally
+    // true — an overdue or same-day task shows its real date instead, since
+    // that's the whole point of surfacing it.
+    var isTomorrow = date.toDateString() === tomorrow.toDateString();
+    taskDateLabel.textContent = isTomorrow ? tr("tonightBinsLabel") : fmtLong(date);
     renderBadges(taskBadges, task.codes);
+
+    var dutyPerson = task.out_by || thisWeek.name;
+    homeDutyAvatar.hidden = false;
+    homeDutyAvatar.textContent = initials(dutyPerson);
+
+    // With a local "who am I" set, the name picker is redundant — it's
+    // pre-filled with that person and hidden, leaving one big button.
+    var meOnRoster = ME && ROSTER.includes(ME);
+    outNameSelect.hidden = meOnRoster;
+    backNameSelect.hidden = meOnRoster;
+    if (meOnRoster) { outNameSelect.value = ME; backNameSelect.value = ME; }
 
     if (!task.out_at) {
       outRow.hidden = false;
       backRow.hidden = true;
-      claimStatus.textContent = tr("outPending");
+      claimStatus.innerHTML = "";
+      var parts = fmt("dutyTonight", { name: dutyPerson }).split(dutyPerson);
+      claimStatus.appendChild(document.createTextNode(parts[0]));
+      var strongName = document.createElement("strong");
+      strongName.style.color = "var(--ink)";
+      strongName.textContent = dutyPerson;
+      claimStatus.appendChild(strongName);
+      var tail = parts.slice(1).join(dutyPerson);
+      var tonightWord = tr("relTonight").toLowerCase();
+      var tIdx = tail.toLowerCase().lastIndexOf(tonightWord);
+      if (tIdx !== -1) {
+        claimStatus.appendChild(document.createTextNode(tail.slice(0, tIdx)));
+        var strongTonight = document.createElement("strong");
+        strongTonight.textContent = tail.slice(tIdx, tIdx + tonightWord.length);
+        claimStatus.appendChild(strongTonight);
+        claimStatus.appendChild(document.createTextNode(tail.slice(tIdx + tonightWord.length)));
+      } else {
+        claimStatus.appendChild(document.createTextNode(tail));
+      }
     } else {
       outRow.hidden = true;
       backRow.hidden = false;
-      fillNameSelect(backNameSelect, task.out_by);
+      if (!meOnRoster) fillNameSelect(backNameSelect, task.out_by);
       claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
     }
   }
@@ -602,20 +1012,25 @@
         ranked.forEach(function (name, i) {
           var idx = ROSTER.indexOf(name);
           var row = document.createElement("div");
-          row.className = "lb-row";
+          row.className = "poster lb-row" + (i === 0 ? " top" : "") + (name === ME ? " mine" : "");
           var av = document.createElement("span");
           av.className = "avatar lb-avatar";
-          av.style.background = AVATAR_COLORS[idx % AVATAR_COLORS.length];
           av.textContent = initials(name);
           row.innerHTML = '<span class="lb-rank">' + (i + 1) + '</span>';
           row.appendChild(av);
           var nameSpan = document.createElement("span");
           nameSpan.className = "lb-name";
-          nameSpan.textContent = name;
+          nameSpan.appendChild(document.createTextNode(name));
+          if (name === ME) {
+            var youTag = document.createElement("span");
+            youTag.className = "you-tag";
+            youTag.textContent = " " + tr("youTag");
+            nameSpan.appendChild(youTag);
+          }
           row.appendChild(nameSpan);
           var coinSpan = document.createElement("span");
           coinSpan.className = "lb-coins";
-          coinSpan.textContent = tally[name] + " SCRAP";
+          coinSpan.textContent = tally[name];
           row.appendChild(coinSpan);
           leaderboardEl.appendChild(row);
         });
@@ -694,6 +1109,7 @@
       })
       .then(function (task) {
         celebrate(task.out_by, task.coins);
+        celebrateAchievements(task.unlocked);
         loadLeaderboard();
         return loadTask();
       })
@@ -706,7 +1122,8 @@
   loadLeaderboard();
 
   // ---- email notification subscriptions ----
-  var notifyNameSelect = document.getElementById("notifyNameSelect");
+  var subscribePickNote = document.getElementById("subscribePickNote");
+  var subscribeFields = document.getElementById("subscribeFields");
   var notifyEmailInput = document.getElementById("notifyEmailInput");
   var notifyLangSelect = document.getElementById("notifyLangSelect");
   var notifySubscribeBtn = document.getElementById("notifySubscribeBtn");
@@ -716,15 +1133,12 @@
   var unsubBtn = document.getElementById("unsubBtn");
 
   function renderNotifyForm() {
-    var currentName = notifyNameSelect.value;
-    notifyNameSelect.innerHTML = "";
-    ROSTER.forEach(function (name) {
-      var opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      notifyNameSelect.appendChild(opt);
-    });
-    notifyNameSelect.value = currentName && ROSTER.includes(currentName) ? currentName : ROSTER[0];
+    // The subscription is for whoever was picked under "Who are you?" —
+    // no second name picker. Until a name is picked, the form just points
+    // up to that field.
+    var meOnRoster = !!(ME && ROSTER.includes(ME));
+    subscribePickNote.hidden = meOnRoster;
+    subscribeFields.hidden = !meOnRoster;
 
     var currentSubLang = notifyLangSelect.value;
     notifyLangSelect.innerHTML = "";
@@ -737,50 +1151,54 @@
     notifyLangSelect.value = currentSubLang || currentLang;
   }
 
-  function renderNotifyList(rows) {
-    notifyList.innerHTML = "";
-    if (!rows.length) {
-      var none = document.createElement("div");
-      none.className = "claim-status";
-      none.textContent = tr("subscribedNone");
-      notifyList.appendChild(none);
-      return;
-    }
-    var note = document.createElement("div");
-    note.className = "claim-status";
-    note.textContent = tr("subscribedListNote");
-    notifyList.appendChild(note);
-    rows.forEach(function (row) {
-      var line = document.createElement("div");
-      line.className = "lb-row";
-      var nameSpan = document.createElement("span");
-      nameSpan.className = "lb-name";
-      nameSpan.textContent = row.name;
-      line.appendChild(nameSpan);
-      notifyList.appendChild(line);
-    });
-  }
-
+  // Who's subscribed (names only) — drives the dot on roster avatars.
   function loadSubscribers() {
     fetch("/api/subscribe")
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
-        renderNotifyList(rows);
         subscribedNames = {};
         rows.forEach(function (row) { subscribedNames[row.name] = true; });
-        renderDuty(); // re-draw the roster chips with the subscribed badge
+        renderDuty(); // re-draw the roster with the subscribed badge
       })
       .catch(function () {});
   }
 
+  // The "You" tab's own card: subscribed state (masked address, bonus chip,
+  // unsubscribe) vs. the subscribe form.
+  var subscribedState = document.getElementById("subscribedState");
+  var subscribeForm = document.getElementById("subscribeForm");
+  var subEmail = document.getElementById("subEmail");
+  var subBonus = document.getElementById("subBonus");
+
+  function loadMySubscription() {
+    if (!ME) {
+      subscribedState.hidden = true;
+      subscribeForm.hidden = false;
+      return;
+    }
+    fetch("/api/subscribe/status/" + encodeURIComponent(ME))
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (s) {
+        subscribedState.hidden = !s.subscribed;
+        subscribeForm.hidden = !!s.subscribed;
+        subEmail.textContent = s.email || "";
+        subBonus.hidden = !s.bonusAwarded;
+      })
+      .catch(function () {
+        subscribedState.hidden = true;
+        subscribeForm.hidden = false;
+      });
+  }
+
   notifySubscribeBtn.addEventListener("click", function () {
+    if (!ME) { renderNotifyForm(); return; }
     notifySubscribeBtn.disabled = true;
     notifyStatus.textContent = tr("notifySubscribing");
     fetch("/api/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        name: notifyNameSelect.value,
+        name: ME,
         email: notifyEmailInput.value.trim(),
         language: notifyLangSelect.value
       })
@@ -798,24 +1216,345 @@
   });
 
   unsubBtn.addEventListener("click", function () {
-    var email = unsubEmailInput.value.trim();
-    if (!email) return;
+    if (!ME) return;
     unsubBtn.disabled = true;
-    fetch("/api/subscribe/" + encodeURIComponent(email), { method: "DELETE" })
+    fetch("/api/subscribe/by-name/" + encodeURIComponent(ME), { method: "DELETE" })
       .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
       .then(function () {
-        unsubEmailInput.value = "";
         notifyStatus.textContent = tr("unsubDone");
         loadSubscribers();
+        loadMySubscription();
       })
       .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
       .finally(function () { unsubBtn.disabled = false; });
+  });
+
+  // ---- "You": who am I, my occupation, my achievements ----
+  var meSelect = document.getElementById("meSelect");
+  var meStatus = document.getElementById("meStatus");
+  var occupationRow = document.getElementById("occupationRow");
+  var occupationInput = document.getElementById("occupationInput");
+  var occupationSaveBtn = document.getElementById("occupationSaveBtn");
+
+  function renderMeSelect() {
+    var current = ME;
+    meSelect.innerHTML = "";
+    var blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = tr("mePickPrompt");
+    meSelect.appendChild(blank);
+    ROSTER.forEach(function (name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      meSelect.appendChild(opt);
+    });
+    meSelect.value = current && ROSTER.includes(current) ? current : "";
+    if (meSelect.value !== current) setMe(meSelect.value);
+    occupationRow.hidden = !ME;
+    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
+    meStatus.textContent = ME ? "" : tr("meNotPicked");
+    renderProfileHead();
+  }
+
+  var profileHead = document.getElementById("profileHead");
+  var profileAvatar = document.getElementById("profileAvatar");
+  var profileName = document.getElementById("profileName");
+  var profileSince = document.getElementById("profileSince");
+  var profileStats = document.getElementById("profileStats");
+  var statTurns = document.getElementById("statTurns");
+  var statCoins = document.getElementById("statCoins");
+  var statStreak = document.getElementById("statStreak");
+
+  // The name picker + occupation field live in a collapsible panel: with no
+  // name picked it's the whole screen; once picked, the screen matches the
+  // mockup (head, stats, language, reminders) and an "Edit" link opens it.
+  var profileEdit = document.getElementById("profileEdit");
+  var profileEditBtn = document.getElementById("profileEditBtn");
+  var profileEditOpen = false;
+
+  function renderProfileEdit() {
+    profileEdit.hidden = !!ME && !profileEditOpen;
+    profileEditBtn.hidden = !ME;
+    profileEditBtn.textContent = tr(profileEditOpen ? "profileDoneBtn" : "profileEditBtn");
+  }
+  profileEditBtn.addEventListener("click", function () {
+    profileEditOpen = !profileEditOpen;
+    renderProfileEdit();
+  });
+
+  function renderProfileHead() {
+    renderProfileEdit();
+    if (!ME) {
+      profileHead.hidden = true;
+      profileStats.hidden = true;
+      return;
+    }
+    var idx = ROSTER.indexOf(ME);
+    profileHead.hidden = false;
+    profileStats.hidden = false;
+    profileAvatar.style.background = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+    profileAvatar.textContent = initials(ME);
+    profileName.textContent = ME;
+    // "In the roster since Mar 2025" as in the mockup; when the join date
+    // isn't known, the occupation takes that line instead (or nothing).
+    var since = ROSTER_CREATED_AT[ME];
+    var sinceDate = since ? new Date(since) : null;
+    profileSince.textContent = sinceDate
+      ? (tr("profileSincePrefix") + " " + tr("months")[sinceDate.getMonth()] + " " + sinceDate.getFullYear())
+      : (ROSTER_OCCUPATION[ME] || "");
+    statStreak.textContent = gBestVal;
+    // Occupation arrives with /api/roster/full, usually after the first
+    // render — fill the field once it's known, but never over a draft.
+    if (!occupationInput.value && ROSTER_OCCUPATION[ME]) occupationInput.value = ROSTER_OCCUPATION[ME];
+  }
+
+  meSelect.addEventListener("change", function () {
+    setMe(meSelect.value);
+    profileEditOpen = false; // picking a name collapses the panel
+    occupationRow.hidden = !ME;
+    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
+    meStatus.textContent = ME ? "" : tr("meNotPicked");
+    renderProfileHead();
+    renderDonateSelect();
+    loadAchievements();
+    loadReactions();
+    loadLeaderboard();
+    renderTask(currentTask);
+    renderNotifyForm();
+    loadMySubscription();
+  });
+
+  occupationSaveBtn.addEventListener("click", function () {
+    if (!ME) return;
+    occupationSaveBtn.disabled = true;
+    fetch("/api/roster/" + encodeURIComponent(ME), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ occupation: occupationInput.value.trim() })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        meStatus.textContent = tr("occupationSaved");
+        loadRosterFull();
+      })
+      .catch(function (e) { meStatus.textContent = e.message || tr("occupationFailed"); })
+      .finally(function () { occupationSaveBtn.disabled = false; });
+  });
+
+  // ---- achievements ----
+  var achvGrid = document.getElementById("achvGrid");
+  var achvUnlockedMsg = document.getElementById("achvUnlockedMsg");
+
+  function renderAchievements(list) {
+    achvGrid.innerHTML = "";
+    list.forEach(function (a) {
+      var badge = document.createElement("div");
+      badge.className = "achv-badge" + (a.unlockedAt ? " unlocked" : "");
+      var circle = document.createElement("div");
+      circle.className = "achv-circle";
+      circle.textContent = (ACHIEVEMENT_META[a.code] && ACHIEVEMENT_META[a.code].icon) || "•";
+      badge.appendChild(circle);
+      var label = document.createElement("div");
+      label.className = "achv-label";
+      label.textContent = tr("achv_" + a.code);
+      badge.appendChild(label);
+      achvGrid.appendChild(badge);
+    });
+  }
+
+  var balanceHero = document.getElementById("balanceHero");
+  var balanceNum = document.getElementById("balanceNum");
+
+  function loadAchievements() {
+    var homeCoinsLabel = document.getElementById("homeCoinsLabel");
+    var homeCoinsAvatar = document.getElementById("homeCoinsAvatar");
+    if (!ME) {
+      achvGrid.innerHTML = "";
+      achvUnlockedMsg.textContent = tr("meNotPickedForAchievements");
+      achvUnlockedMsg.classList.add("muted");
+      balanceNum.textContent = "—";
+      homeCoinsLabel.textContent = tr("homeCoinsPrompt");
+      homeCoinsAvatar.classList.remove("on");
+      return;
+    }
+    achvUnlockedMsg.textContent = "";
+    homeCoinsAvatar.classList.add("on");
+    fetch("/api/coins/" + encodeURIComponent(ME))
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (data) {
+        renderAchievements(data.achievements);
+        // "Just unlocked: …" — the most recently earned badge, if any.
+        var latest = null;
+        data.achievements.forEach(function (a) {
+          if (a.unlockedAt && (!latest || a.unlockedAt > latest.unlockedAt)) latest = a;
+        });
+        achvUnlockedMsg.classList.toggle("muted", !latest);
+        achvUnlockedMsg.textContent = latest ? fmt("justUnlocked", { name: tr("achv_" + latest.code) }) : tr("achvNone");
+        balanceNum.textContent = data.balance;
+        statCoins.textContent = data.balance;
+        statTurns.textContent = data.turnsTaken;
+        homeCoinsLabel.textContent = fmt("scrapCoinsCount", { n: data.balance });
+      })
+      .catch(function () {});
+  }
+
+  function celebrateAchievements(unlocked) {
+    if (!unlocked || !unlocked.length) return;
+    unlocked.forEach(function (code, i) {
+      setTimeout(function () {
+        var toast = document.createElement("div");
+        toast.textContent = ((ACHIEVEMENT_META[code] && ACHIEVEMENT_META[code].icon) || "") + " " + tr("achievementUnlocked") + ": " + tr("achv_" + code);
+        toast.style.cssText =
+          "position:fixed; left:50%; top:16px; transform:translateX(-50%); z-index:1000;" +
+          "background:var(--surface-2); color:var(--ink); border:1px solid var(--accent);" +
+          "font-family:'Oswald',sans-serif; font-weight:600; font-size:13px;" +
+          "padding:10px 18px; border-radius:6px; box-shadow:var(--shadow);";
+        document.body.appendChild(toast);
+        setTimeout(function () { toast.remove(); }, 3000);
+      }, i * 700);
+    });
+    loadAchievements();
+  }
+
+  // ---- donate coins ----
+  var donateToSelect = document.getElementById("donateToSelect");
+  var donateAmountInput = document.getElementById("donateAmountInput");
+  var donateBtn = document.getElementById("donateBtn");
+  var donateStatus = document.getElementById("donateStatus");
+
+  function renderDonateSelect() {
+    var current = donateToSelect.value;
+    donateToSelect.innerHTML = "";
+    ROSTER.filter(function (n) { return n !== ME; }).forEach(function (name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      donateToSelect.appendChild(opt);
+    });
+    donateToSelect.value = current || (donateToSelect.options[0] && donateToSelect.options[0].value) || "";
+    donateBtn.disabled = !ME;
+    donateStatus.textContent = ME ? "" : tr("meNotPickedForDonate");
+  }
+
+  donateBtn.addEventListener("click", function () {
+    if (!ME) return;
+    var amount = parseInt(donateAmountInput.value, 10);
+    if (!amount || amount < 1) {
+      donateStatus.textContent = tr("donateBadAmount");
+      return;
+    }
+    donateBtn.disabled = true;
+    donateStatus.textContent = tr("donateSending");
+    fetch("/api/coins/donate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from: ME, to: donateToSelect.value, amount: amount })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function (data) {
+        donateAmountInput.value = "";
+        donateStatus.textContent = fmt("donateDone", { amount: amount, to: donateToSelect.value });
+        loadLeaderboard();
+        celebrateAchievements(data.unlocked);
+      })
+      .catch(function (e) { donateStatus.textContent = e.message || tr("donateFailed"); })
+      .finally(function () { donateBtn.disabled = false; });
+  });
+
+  // ---- reactions on tonight's task ----
+  var reactHeart = document.getElementById("reactHeart");
+  var reactUp = document.getElementById("reactUp");
+  var reactDown = document.getElementById("reactDown");
+  var reactButtons = { heart: reactHeart, up: reactUp, down: reactDown };
+  var reactionHintEl = document.getElementById("reactionHint");
+
+  function reactionDateKey() {
+    // Reactions belong to the task the hero card is showing; the row is
+    // hidden whenever there's no live task, so the fallback is only a guard.
+    if (currentTask && currentTask.date_key) return currentTask.date_key;
+    var y = tomorrow.getFullYear(), m = String(tomorrow.getMonth() + 1).padStart(2, "0"), d = String(tomorrow.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+
+  function renderReactionCounts(counts, mine) {
+    Object.keys(reactButtons).forEach(function (emoji) {
+      var btn = reactButtons[emoji];
+      btn.querySelector("span").textContent = (counts && counts[emoji]) || 0;
+      btn.classList.toggle("mine", mine === emoji);
+    });
+  }
+
+  var myReaction = null;
+  function loadReactions() {
+    // No live task → the row is hidden, nothing to fetch (renderTask calls
+    // this again once a task is shown).
+    if (!currentTask) return;
+    fetch("/api/reactions/" + reactionDateKey())
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (data) {
+        var mine = null;
+        (data.rows || []).forEach(function (row) { if (row.name === ME) mine = row.emoji; });
+        myReaction = mine;
+        renderReactionCounts(data.counts, mine);
+      })
+      .catch(function () {});
+    reactionHintEl.textContent = ME ? tr("donateHeading") : tr("reactionHint");
+    reactionHintEl.classList.toggle("donate", !!ME);
+  }
+  reactionHintEl.addEventListener("click", function () {
+    if (ME) showView("rewards");
+  });
+
+  Object.keys(reactButtons).forEach(function (emoji) {
+    reactButtons[emoji].addEventListener("click", function () {
+      if (!ME) {
+        reactionHintEl.textContent = tr("reactionHint");
+        return;
+      }
+      fetch("/api/reactions/" + reactionDateKey(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: ME, emoji: emoji })
+      })
+        .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
+        .then(function (data) {
+          myReaction = emoji;
+          renderReactionCounts(data.counts, emoji);
+        })
+        .catch(function () {});
+    });
   });
 
   // ---- camera check (backend-backed, Gemini) ----
   (function () {
     var input = document.getElementById("scanInput");
     var resultEl = document.getElementById("scanResult");
+
+    var thumbEl = document.getElementById("scanThumb");
+    var idleEl = document.getElementById("scanPhotoIdle");
+    var titleEl = document.getElementById("scanTitle");
+
+    function showPhoto(url) {
+      thumbEl.src = url;
+      thumbEl.hidden = false;
+      idleEl.hidden = true;
+    }
+    function resetScan() {
+      resultEl.hidden = true;
+      resultEl.innerHTML = "";
+      thumbEl.hidden = true;
+      thumbEl.removeAttribute("src");
+      idleEl.hidden = false;
+      titleEl.textContent = tr("scanScreenTitle");
+      input.value = "";
+    }
 
     function setStatus(text) {
       resultEl.hidden = false;
@@ -825,8 +1564,9 @@
     function addAgainHandler() {
       var b = document.getElementById("scanAgainBtn");
       if (!b) return;
-      b.addEventListener("click", function () { resultEl.hidden = true; input.value = ""; });
+      b.addEventListener("click", resetScan);
     }
+    document.getElementById("scanBackBtn").addEventListener("click", resetScan);
 
     // data.item / data.why come from Gemini's read of a user-supplied photo —
     // treated as untrusted input (the JSON schema constrains structure, not
@@ -837,49 +1577,57 @@
       resultEl.hidden = false;
       resultEl.innerHTML = "";
 
-      var thumb = document.createElement("img");
-      thumb.className = "scan-thumb";
-      thumb.src = thumbUrl;
-      thumb.alt = "";
-      resultEl.appendChild(thumb);
+      showPhoto(thumbUrl);
+      titleEl.textContent = tr("scanResultTitle");
 
       var bodyDiv = document.createElement("div");
       bodyDiv.className = "scan-body";
 
       var head = document.createElement("div");
       head.className = "guide-head";
-      var letter = document.createElement("span");
-      letter.className = "guide-letter";
-      letter.style.background = BIN_COLOR[data.code];
-      letter.textContent = data.code;
-      var title = document.createElement("span");
-      title.className = "guide-title";
-      title.textContent = g ? g.title : data.code;
-      head.appendChild(letter);
-      head.appendChild(title);
+      head.style.alignItems = "center";
+      var pill = document.createElement("span");
+      pill.className = "bin-pill";
+      pill.style.background = BIN_COLOR[data.code];
+      pill.textContent = binLabel(data.code);
+      head.appendChild(pill);
+      if (data.item) {
+        var title = document.createElement("span");
+        title.className = "guide-title";
+        title.textContent = data.item;
+        head.appendChild(title);
+      }
       bodyDiv.appendChild(head);
 
       var bodyText = document.createElement("div");
       bodyText.className = "guide-body";
-      if (data.item) {
-        var itemStrong = document.createElement("strong");
-        itemStrong.textContent = data.item + ".";
-        bodyText.appendChild(itemStrong);
-        bodyText.appendChild(document.createTextNode(" "));
-      }
       bodyText.appendChild(document.createTextNode(data.why));
       bodyDiv.appendChild(bodyText);
 
+      // Mockup layout: two buttons — "Email me this" (reveals the address
+      // field) and "Scan another" (resets) — instead of an always-open form.
+      var actions = document.createElement("div");
+      actions.className = "scan-actions";
+      var emailToggle = document.createElement("button");
+      emailToggle.type = "button";
+      emailToggle.className = "launch-btn launch-primary";
+      emailToggle.textContent = tr("scanEmailMe");
       var again = document.createElement("button");
-      again.className = "scan-again";
+      again.className = "stamp-btn hero-btn";
       again.type = "button";
       again.id = "scanAgainBtn";
-      again.textContent = tr("scanTryAnother");
-      bodyDiv.appendChild(again);
+      again.textContent = tr("scanAnother");
+      actions.appendChild(emailToggle);
+      actions.appendChild(again);
+      bodyDiv.appendChild(actions);
 
       var emailRow = document.createElement("div");
-      emailRow.className = "claim-row";
-      emailRow.style.marginTop = "6px";
+      emailRow.className = "scan-email-row";
+      emailRow.hidden = true;
+      emailToggle.addEventListener("click", function () {
+        emailRow.hidden = !emailRow.hidden;
+        if (!emailRow.hidden) emailInput.focus();
+      });
       var emailInput = document.createElement("input");
       emailInput.type = "email";
       emailInput.className = "claim-select";
@@ -929,16 +1677,23 @@
       if (!file || busy) return;
       busy = true;
       var thumbUrl = URL.createObjectURL(file);
+      showPhoto(thumbUrl);
       setStatus(tr("scanThinking"));
 
       var formData = new FormData();
       formData.append("photo", file);
+      if (ME) formData.append("name", ME);
 
       fetch("/api/check", { method: "POST", body: formData })
         .then(function (r) {
-          if (r.status === 503) throw { code: "NO_API_KEY" };
           if (r.status === 413) throw { code: "TOO_LARGE" };
-          if (!r.ok) throw { code: "SERVER" };
+          if (!r.ok) {
+            // The server sends {code} for its own failures (no key, every
+            // Gemini model out of quota, …); fall back to a generic code.
+            return r.json().catch(function () { return {}; }).then(function (e) {
+              throw { code: (e && e.code) || (r.status === 503 ? "NO_API_KEY" : "SERVER") };
+            });
+          }
           return r.json();
         })
         .then(function (data) {
@@ -946,10 +1701,12 @@
             renderError(tr("scanNoTell"));
           } else {
             renderResult(thumbUrl, data);
+            celebrateAchievements(data.unlocked);
           }
         })
         .catch(function (e) {
           if (e && e.code === "NO_API_KEY") renderError(tr("scanUnavailable"));
+          else if (e && e.code === "GEMINI_BUSY") renderError(tr("scanBusy"));
           else if (e && e.code === "TOO_LARGE") renderError(tr("scanTooLarge"));
           else renderError(tr("scanFailed"));
         })
@@ -971,6 +1728,7 @@
       recomputeWeek();
       if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
       applyLang();
+      loadRosterFull();
     })
     .catch(function () {
       ROSTER = ["Housemate"];

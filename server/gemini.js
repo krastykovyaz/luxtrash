@@ -1,4 +1,21 @@
-const MODEL = "gemini-2.5-flash";
+// Free-tier keys get a small per-model daily quota (20 requests/day on
+// gemini-2.5-flash as of Sep 2026), so one busy evening of scanning empties
+// it. Each model has its own quota, so we walk this list and fall through
+// on 429 (quota), 503 (overloaded) and 404 (model retired) — anything else
+// (bad image, auth) is a real error and stops the loop.
+// Override with GEMINI_MODELS="a,b,c" in .env.
+const DEFAULT_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash"
+];
+const MODELS = (process.env.GEMINI_MODELS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+if (!MODELS.length) MODELS.push(...DEFAULT_MODELS);
+
+const FALLTHROUGH_STATUSES = new Set([404, 429, 503]);
 
 const PROMPT =
   "You're looking at a photo of one household waste item in a shared house in Luxembourg, " +
@@ -20,11 +37,7 @@ async function checkPhoto(buffer, mimeType) {
     throw err;
   }
 
-  // Auth keys (the current key type — see Google AI Studio's API key docs)
-  // authenticate via the x-goog-api-key header, not the old ?key= query
-  // param used by legacy standard keys.
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-  const body = {
+  const body = JSON.stringify({
     contents: [
       {
         parts: [
@@ -34,22 +47,44 @@ async function checkPhoto(buffer, mimeType) {
       }
     ],
     generationConfig: { responseMimeType: "application/json" }
-  };
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify(body)
   });
 
-  if (!res.ok) {
+  let res = null;
+  const attempts = [];
+  for (const model of MODELS) {
+    // Auth keys (the current key type — see Google AI Studio's API key
+    // docs) authenticate via the x-goog-api-key header, not the old ?key=
+    // query param used by legacy standard keys.
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+      body
+    });
+    if (res.ok) {
+      if (attempts.length) console.warn(`/api/check: fell back to ${model} after ${attempts.join(", ")}`);
+      break;
+    }
     const text = await res.text().catch(() => "");
-    // Keep the raw upstream body out of the thrown message — it's only for
-    // the server log (detail), never forwarded to the client, which should
-    // see a fixed, safe message instead.
-    const err = new Error("Gemini couldn't process that photo.");
-    err.code = "GEMINI_ERROR";
-    err.detail = `HTTP ${res.status}: ${text.slice(0, 300)}`;
+    attempts.push(`${model}=${res.status}`);
+    if (!FALLTHROUGH_STATUSES.has(res.status)) {
+      // Keep the raw upstream body out of the thrown message — it's only
+      // for the server log (detail), never forwarded to the client, which
+      // should see a fixed, safe message instead.
+      const err = new Error("Gemini couldn't process that photo.");
+      err.code = "GEMINI_ERROR";
+      err.detail = `${model} HTTP ${res.status}: ${text.slice(0, 300)}`;
+      throw err;
+    }
+    res = null;
+  }
+
+  if (!res) {
+    // Every model was out of quota / overloaded — a temporary condition the
+    // client can explain honestly ("try again in a bit") rather than "failed".
+    const err = new Error("All Gemini models are busy or over quota right now.");
+    err.code = "GEMINI_BUSY";
+    err.detail = attempts.join(", ");
     throw err;
   }
 

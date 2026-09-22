@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bin Duty</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Noto+Sans+SC:wght@500;700&family=Noto+Sans+Devanagari:wght@500;700&family=Noto+Sans+Bengali:wght@500;700&family=Noto+Sans+Arabic:wght@500;700&family=Noto+Nastaliq+Urdu:wght@500;700&family=Noto+Sans+JP:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Work+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@500;700&family=Noto+Sans+Devanagari:wght@500;700&family=Noto+Sans+Bengali:wght@500;700&family=Noto+Sans+Arabic:wght@500;700&family=Noto+Nastaliq+Urdu:wght@500;700&family=Noto+Sans+JP:wght@500;700&display=swap">
 <style>
   :root {
     --bg: #15120C;
@@ -33,12 +33,12 @@
     background-color: var(--bg);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     color: var(--ink);
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Work Sans', system-ui, sans-serif;
     padding-inline: 16px;
     padding-block: 20px 48px;
   }
   h1, h2, h3 { margin: 0; text-wrap: balance; }
-  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .mono { font-family: 'Work Sans', sans-serif; font-variant-numeric: tabular-nums; }
   a { color: var(--accent); }
   img { max-width: 100%; }
   [hidden] { display: none !important; }
@@ -48,7 +48,7 @@
 
   /* ---- language switcher ---- */
   .lang-select {
-    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+    font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
     background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 5px;
     padding: 8px 10px; cursor: pointer; max-width: 100%;
   }
@@ -57,12 +57,10 @@
   /* ---- masthead ---- */
   .masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .masthead h1 {
-    font-family: 'Permanent Marker', cursive; font-weight: 400;
-    font-size: clamp(32px, 8vw, 44px); color: var(--accent); letter-spacing: 0.01em;
-    transform: rotate(-1.5deg); display: inline-block;
-    text-shadow: 2px 2px 0 rgba(0,0,0,0.5);
+    font-family: 'Bebas Neue', sans-serif; font-weight: 400;
+    font-size: clamp(30px, 8vw, 40px); color: var(--accent); letter-spacing: 0.06em;
+    display: inline-block; text-transform: uppercase;
   }
-  [dir="rtl"] .masthead h1 { transform: rotate(1.5deg); }
   .masthead .today { font-size: 12px; color: var(--ink-faint); }
   .hazard-bar {
     height: 9px; border-radius: 2px;
@@ -73,32 +71,19 @@
   .stakes { display: flex; gap: 10px; align-items: baseline; background: var(--surface); border: 2px solid var(--wrong); border-radius: 4px; padding: 10px 14px; font-size: 13px; color: var(--ink-soft); }
   .stakes strong { color: var(--ink); }
 
-  /* ---- poster cards (pinned-up look) ---- */
-  .poster { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
-  .poster::before {
-    content: ""; position: absolute; top: -11px; width: 66px; height: 22px;
-    background: color-mix(in srgb, var(--accent) 60%, transparent);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
-  }
-  .poster-a { transform: rotate(-0.6deg); }
-  .poster-a::before { left: 22px; transform: rotate(-4deg); }
-  .poster-b { transform: rotate(0.5deg); }
-  .poster-b::before { left: 50%; margin-left: -33px; transform: rotate(3deg); }
-  .poster-c { transform: rotate(-0.4deg); }
-  .poster-c::before { right: 26px; transform: rotate(5deg); }
-  .poster-d { transform: rotate(0.6deg); }
-  .poster-d::before { left: 40px; transform: rotate(-3deg); }
+  /* ---- flat cards ---- */
+  .poster { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 
   /* ---- game ---- */
   .game-card { padding: 22px; display: flex; flex-direction: column; gap: 18px; }
-  .game-stats { display: flex; gap: 18px; font-size: 11px; color: var(--ink-faint); letter-spacing: 0.07em; text-transform: uppercase; font-family: 'Oswald', sans-serif; }
-  .game-stats b { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 19px; color: var(--accent); letter-spacing: 0; text-transform: none; font-weight: 600; margin-top: 2px; }
+  .game-stats { display: flex; gap: 18px; font-size: 11px; color: var(--ink-faint); letter-spacing: 0.07em; text-transform: uppercase; font-family: 'Work Sans', sans-serif; }
+  .game-stats b { display: block; font-family: 'Work Sans', sans-serif; font-size: 19px; color: var(--accent); letter-spacing: 0; text-transform: none; font-weight: 600; margin-top: 2px; }
   .game-item {
     background: var(--surface-2); border: 1px dashed var(--line); border-radius: 8px; padding: 28px 18px; text-align: center;
     display: flex; flex-direction: column; gap: 6px; transition: transform 0.15s ease, background 0.2s ease, border-color .2s ease;
   }
-  .game-item .item-eyebrow { font-family: 'Oswald', sans-serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
-  .game-item .item-name { font-family: 'Permanent Marker', cursive; font-weight: 400; font-size: clamp(22px, 6vw, 28px); color: var(--ink); }
+  .game-item .item-eyebrow { font-family: 'Work Sans', sans-serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .game-item .item-name { font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: clamp(22px, 6vw, 28px); color: var(--ink); }
   .game-item.correct { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); border-color: var(--accent); }
   .game-item.wrong { background: color-mix(in srgb, var(--wrong) 18%, var(--surface-2)); border-color: var(--wrong); }
   @media (prefers-reduced-motion: no-preference) { .game-item.pulse { animation: pulse 0.28s ease; } }
@@ -106,24 +91,24 @@
   .bin-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   @media (max-width: 420px) { .bin-buttons { grid-template-columns: repeat(2, 1fr); } }
   .bin-btn {
-    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 700; color: var(--ink);
-    background: var(--surface-2); border: 2px solid var(--line); border-radius: 6px;
-    padding: 11px 6px; display: flex; align-items: center; justify-content: center; gap: 7px;
-    cursor: pointer; min-height: 46px; transition: border-color 0.15s ease, transform 0.1s ease;
+    font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 700; color: #1a1a1a;
+    border: none; border-radius: 8px;
+    padding: 11px 6px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; min-height: 46px; transition: opacity 0.15s ease, transform 0.1s ease, outline-color 0.15s ease;
+    outline: 3px solid transparent; outline-offset: -3px;
   }
-  .bin-btn:hover:not(:disabled) { border-color: var(--ink-faint); }
+  .bin-btn:hover:not(:disabled) { transform: translateY(-1px); }
   .bin-btn:active:not(:disabled) { transform: scale(0.97); }
-  .bin-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .bin-btn:disabled { cursor: default; opacity: 0.5; }
-  .bin-btn.pick-correct { border-color: var(--accent); background: var(--accent-soft); opacity: 1; }
-  .bin-btn.pick-wrong { border-color: var(--wrong); opacity: 1; }
-  .bin-btn .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .bin-btn:focus-visible { outline-color: rgba(0,0,0,0.5); }
+  .bin-btn:disabled { cursor: default; opacity: 0.45; }
+  .bin-btn.pick-correct { outline-color: rgba(28,20,0,0.55); opacity: 1; }
+  .bin-btn.pick-wrong { outline-color: var(--wrong); opacity: 1; }
   .game-feedback { font-size: 13.5px; color: var(--ink-soft); line-height: 1.45; min-height: 20px; }
   .game-feedback strong { color: var(--accent); }
   .game-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .game-progress { font-size: 12px; color: var(--ink-faint); font-family: 'IBM Plex Mono', monospace; }
+  .game-progress { font-size: 12px; color: var(--ink-faint); font-family: 'Work Sans', sans-serif; }
   .stamp-btn {
-    font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase;
+    font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase;
     color: var(--accent-ink); background: var(--accent); border: none; border-radius: 5px; padding: 10px 18px;
     cursor: pointer; transition: opacity 0.15s ease, transform 0.1s ease;
   }
@@ -136,7 +121,7 @@
   .hero-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 480px) { .hero-row { grid-template-columns: 1fr; } }
   .hero-cell { display: flex; flex-direction: column; gap: 8px; }
-  .hero-cell .eyebrow { font-family: 'Oswald', sans-serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .hero-cell .eyebrow { font-family: 'Work Sans', sans-serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   .hero-cell .date { font-size: 13px; color: var(--ink-soft); }
   .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
   .badge {
@@ -158,7 +143,7 @@
     padding: 8px 4px 10px; text-align: center; display: flex; flex-direction: column; gap: 6px; align-items: center;
   }
   .day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-  .day .dow { font-family: 'Oswald', sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .day .dow { font-family: 'Work Sans', sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   .day .num { font-size: 15px; font-weight: 700; }
   .day .dots { display: flex; gap: 3px; min-height: 11px; }
   .day .dots .dot { width: 8px; height: 8px; }
@@ -166,7 +151,7 @@
   /* ---- section heading ---- */
   section { display: flex; flex-direction: column; gap: 12px; }
   .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .section-head h2 { font-family: 'Oswald', sans-serif; font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; color: var(--ink); }
+  .section-head h2 { font-family: 'Bebas Neue', sans-serif; font-size: 22px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink); }
   .section-note { font-size: 13px; color: var(--ink-soft); }
 
   /* ---- duty ---- */
@@ -175,7 +160,7 @@
   .avatar {
     width: 44px; height: 44px; border-radius: 50%; flex: none; border: 2px solid rgba(0,0,0,0.3);
     display: flex; align-items: center; justify-content: center; position: relative;
-    font-family: 'Permanent Marker', cursive; font-weight: 400; font-size: 17px; color: #1a1a1a;
+    font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: 17px; color: #1a1a1a;
   }
   .roster-chip.subscribed .avatar::after {
     content: ""; position: absolute; bottom: -1px; right: -1px;
@@ -184,7 +169,7 @@
   }
   .duty-name { font-size: 17px; font-weight: 700; }
   .duty-sub { font-size: 13px; color: var(--ink-soft); }
-  .duty-tag { margin-left: auto; font-family: 'Oswald', sans-serif; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; color: var(--accent-ink); background: var(--accent); padding: 4px 10px; border-radius: 4px; }
+  .duty-tag { margin-left: auto; font-family: 'Work Sans', sans-serif; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; color: var(--accent-ink); background: var(--accent); padding: 4px 10px; border-radius: 4px; }
   [dir="rtl"] .duty-tag { margin-left: 0; margin-right: auto; }
   .duty-next { font-size: 13px; color: var(--ink-soft); padding-top: 12px; border-top: 1px dashed var(--line); }
   .duty-next b { color: var(--ink); }
@@ -198,37 +183,39 @@
   .roster-add-row .stamp-btn { padding: 9px 16px; }
   .duty-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 12px; border-top: 1px dashed var(--line); }
   .copy-hint { font-size: 12.5px; color: var(--ink-faint); }
-  .copy-fallback { width: 100%; min-height: 100px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px; resize: vertical; }
+  .copy-fallback { width: 100%; min-height: 100px; font-family: 'Work Sans', sans-serif; font-size: 12.5px; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px; resize: vertical; }
 
   /* ---- rewards ---- */
   .rewards-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
   .task-info { display: flex; flex-direction: column; gap: 8px; }
   .claim-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .claim-select {
-    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; color: var(--ink);
+    font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600; color: var(--ink);
     background: var(--surface-2); border: 2px solid var(--line); border-radius: 6px; padding: 9px 10px;
   }
   .claim-status { font-size: 13px; color: var(--ink-soft); }
   .leaderboard { display: flex; flex-direction: column; gap: 7px; padding-top: 12px; border-top: 1px dashed var(--line); }
-  .lb-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
-  .lb-rank { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--ink-faint); width: 16px; flex: none; text-align: right; }
+  .lb-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; }
+  .lb-row.mine { border-color: var(--accent); background: var(--accent-soft); }
+  .lb-rank { font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--ink-faint); width: 16px; flex: none; text-align: right; }
   .lb-avatar { width: 26px; height: 26px; font-size: 11px; border-width: 1px; }
   .lb-name { flex: 1; font-weight: 600; }
-  .lb-coins { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--accent); }
+  .lb-name .you-tag { color: var(--ink-faint); font-weight: 400; }
+  .lb-coins { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--accent); }
 
   /* ---- sorting guide ---- */
-  .guide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  @media (max-width: 480px) { .guide-grid { grid-template-columns: 1fr; } }
-  .guide-card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
-  .guide-card.flagged { border-color: var(--wrong); }
-  .guide-head { display: flex; align-items: center; gap: 9px; }
-  .guide-letter {
-    width: 26px; height: 26px; border-radius: 5px; flex: none; color: #1a1a1a;
-    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; font-family: 'IBM Plex Mono', monospace;
-  }
-  .guide-title { font-weight: 700; font-size: 14.5px; }
+  .guide-grid { display: flex; flex-direction: column; gap: 10px; }
+  .guide-card { display: flex; align-items: flex-start; gap: 10px; }
+  .guide-card.flagged .guide-letter { outline: 2px solid var(--wrong); outline-offset: 1px; }
+  .guide-head { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; }
+  .guide-letter { width: 12px; height: 12px; border-radius: 3px; flex: none; margin-top: 4px; }
+  .guide-title { font-weight: 700; font-size: 14px; }
   .guide-body { font-size: 13.5px; color: var(--ink-soft); line-height: 1.45; }
   .guide-body strong { color: var(--accent); }
+  .bin-pill {
+    display: inline-flex; align-items: center; font-weight: 700; font-size: 12px;
+    color: #1a1a1a; padding: 7px 13px; border-radius: 7px; flex: none;
+  }
 
   /* ---- camera check ---- */
   .scan-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
@@ -244,21 +231,21 @@
   .scan-thumb { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; flex: none; background: var(--surface-2); border: 1px solid var(--line); }
   .scan-body { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
   .scan-status { font-size: 13.5px; color: var(--ink-soft); }
-  .scan-again { align-self: flex-start; font-family: 'Oswald', sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
+  .scan-again { align-self: flex-start; font-family: 'Work Sans', sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 
   /* ---- calendar ---- */
   details.month { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   details.month summary {
-    cursor: pointer; padding: 13px 16px; font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.02em;
+    cursor: pointer; padding: 13px 16px; font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.02em;
     display: flex; align-items: center; justify-content: space-between; list-style: none;
   }
   details.month summary::-webkit-details-marker { display: none; }
-  details.month summary::after { content: '+'; font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-size: 16px; }
+  details.month summary::after { content: '+'; font-family: 'Work Sans', sans-serif; color: var(--accent); font-size: 16px; }
   details.month[open] summary::after { content: '\2212'; }
   details.month summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .month-body { padding: 4px 12px 14px; overflow-x: auto; }
-  table.cal { border-collapse: collapse; width: 100%; min-width: 380px; }
-  table.cal th { font-family: 'Oswald', sans-serif; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; padding: 6px 2px; }
+  table.cal { border-collapse: collapse; width: 100%; min-width: 310px; }
+  table.cal th { font-family: 'Work Sans', sans-serif; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; padding: 6px 2px; }
   table.cal td { text-align: center; padding: 3px 2px; vertical-align: top; }
   .cal-cell { border-radius: 5px; padding: 5px 2px 6px; min-height: 44px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
   .cal-cell.has-data { background: var(--surface-2); }
@@ -273,190 +260,496 @@
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
 
   /* ---- verify note ---- */
-  .verify-note { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-faint); border-left: 2px solid var(--line); padding-left: 8px; }
+  .verify-note { font-family: 'Work Sans', sans-serif; font-size: 11.5px; color: var(--ink-faint); border-left: 2px solid var(--line); padding-left: 8px; }
   [dir="rtl"] .verify-note { border-left: none; border-right: 2px solid var(--line); padding-left: 0; padding-right: 8px; }
   .verify-note.changed { color: var(--accent); border-color: var(--accent); }
 
   /* ---- resource center ---- */
   .rc-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
   .rc-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; flex-wrap: wrap; }
-  .rc-row .k { font-family: 'Oswald', sans-serif; color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .rc-row .k { font-family: 'Work Sans', sans-serif; color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   .rc-row .v { color: var(--ink); text-align: right; }
   [dir="rtl"] .rc-row .v { text-align: left; }
 
   footer { text-align: center; font-size: 12px; color: var(--ink-faint); padding-top: 8px; }
+
+  /* ---- tabbed views (phone width) vs. full dashboard (wide screens) ---- */
+  body { padding-bottom: 84px; } /* room for the fixed tabbar */
+  .tabbar {
+    position: fixed; left: 16px; right: 16px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 20;
+    display: flex; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 10px 18px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    max-width: 760px; margin-inline: auto;
+  }
+  .tab-btn {
+    flex: 1; background: none; border: none; color: var(--ink-faint);
+    font-family: 'Work Sans', sans-serif; font-size: 10px; font-weight: 500;
+    padding: 4px; border-radius: 6px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .tab-icon { width: 18px; height: 18px; border-radius: 5px; background: var(--ink-faint); }
+  .tab-btn:hover { color: var(--ink-soft); }
+  .tab-btn.active { color: var(--accent); }
+  .tab-btn.active .tab-icon { background: var(--accent); }
+  .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  @media (min-width: 900px) {
+    body { padding-bottom: 48px; }
+    .tabbar { display: none; }
+    [data-view][hidden] { display: flex !important; }
+    .wrap { max-width: 1100px; }
+  }
+
+  /* ---- reactions ---- */
+  .reactions-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+  .reaction-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+    color: var(--ink); font-size: 13px; font-family: 'Work Sans', sans-serif; padding: 6px 11px; cursor: pointer;
+  }
+  .reaction-btn:hover { border-color: var(--ink-faint); }
+  .reaction-btn.mine { border-color: var(--accent); background: var(--accent-soft); }
+  .reaction-hint { font-size: 11.5px; color: var(--ink-faint); margin-left: auto; }
+  [dir="rtl"] .reaction-hint { margin-left: 0; margin-right: auto; }
+
+  /* ---- achievements ---- */
+  .balance-hero { text-align: center; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px dashed var(--line); }
+  .balance-num { font-family: 'Bebas Neue', sans-serif; font-size: 52px; line-height: 1; color: var(--accent); }
+  .balance-label { font-size: 13px; font-weight: 600; margin-top: 2px; }
+  .achv-grid { display: flex; flex-wrap: wrap; gap: 14px; }
+  .achv-badge { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 68px; text-align: center; }
+  .achv-badge .achv-circle {
+    width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: var(--surface-2); border: 1px dashed var(--line); color: var(--ink-faint);
+  }
+  .achv-badge.unlocked .achv-circle { background: var(--accent); border: none; color: var(--accent-ink); }
+  .achv-badge .achv-label { font-size: 10px; color: var(--ink-faint); line-height: 1.25; }
+  .achv-badge.unlocked .achv-label { color: var(--ink); }
+  .chip-occupation { color: var(--ink-faint); font-size: 11px; }
+
+  /* ---- home dashboard (matches the mobile mockup) ---- */
+  .hazard-top { position: fixed; top: 0; left: 0; right: 0; height: 10px; border-radius: 0; z-index: 30; box-shadow: none; }
+  body { padding-top: 26px; }
+  .masthead .today { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.04em; text-transform: uppercase; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
+  .hero-card { padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .hero-duty { gap: 12px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .hero-card.no-task .task-info { display: none; }
+  .hero-card.no-task .hero-duty { padding-top: 0; border-top: none; }
+  body { padding-bottom: 116px; }
+  .hero-avatar { width: 34px; height: 34px; background: var(--accent) !important; color: var(--accent-ink); border: none; font-family: 'Bebas Neue', sans-serif; font-size: 16px; }
+  .hero-status { font-size: 15px; color: var(--ink); }
+  .hero-status strong { color: var(--accent); }
+  .hero-action { gap: 10px; }
+  .hero-action .claim-select { flex: 1; min-width: 0; }
+  .hero-btn { flex: 1; padding: 14px; border-radius: 9px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+  .hero-card .reactions-row { padding-top: 14px; border-top: 1px dashed var(--line); }
+  .reaction-hint { background: none; border: none; cursor: pointer; padding: 0; font-size: 11.5px; font-family: 'Work Sans', sans-serif; }
+  .reaction-hint.donate { color: var(--accent); font-weight: 700; }
+
+  .this-week { padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .this-week-sub { font-size: 11.5px; color: var(--ink-faint); margin-bottom: 4px; }
+  .this-week-rows { display: flex; flex-direction: column; gap: 6px; }
+  .this-week-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .this-week-row .tw-date { width: 42px; flex: none; color: var(--ink-faint); line-height: 1.15; }
+  .this-week-row .badge-row { margin: 0; gap: 6px; flex: 1; }
+  .this-week-row .badge-row .badge { padding: 3px 8px; font-size: 11px; border: none; color: var(--accent-ink); }
+  .this-week-row .badge-row .badge .dot { display: none; }
+  .this-week-row .tw-rel { color: var(--ink-faint); font-size: 11.5px; }
+  .this-week-row .tw-rel.tonight { color: var(--accent); font-weight: 600; }
+  .this-week-empty { font-size: 12px; color: var(--ink-faint); }
+  .this-week-more { align-self: flex-start; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--line); width: 100%; text-align: left; background: none; border-left: none; border-right: none; border-bottom: none; color: var(--accent); font-family: 'Work Sans', sans-serif; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+
+  .roster-avatars { display: flex; gap: 14px; flex-wrap: wrap; }
+  .roster-person { width: 54px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; position: relative; }
+  .roster-person .avatar { width: 50px; height: 50px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 15px; }
+  .roster-person.subscribed .avatar::after { content: ""; position: absolute; top: -2px; right: -2px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); bottom: auto; }
+  .roster-person .rp-name { font-size: 10.5px; color: var(--ink-soft); line-height: 1.2; }
+  .roster-person .rp-occ { font-size: 8.5px; color: var(--ink-faint); line-height: 1.2; }
+
+  .coins-pill { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 999px; }
+  .coins-pill-icon { width: 26px; height: 26px; border-radius: 50%; flex: none; background: var(--surface-2); color: var(--accent-ink); font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  .coins-pill-icon.on { background: var(--accent); }
+  .coins-pill-label { flex: 1; font-weight: 600; font-size: 14px; }
+  .coins-pill-link { background: none; border: none; color: var(--ink-faint); font-family: 'Work Sans', sans-serif; font-size: 12px; cursor: pointer; padding: 0; }
+
+  .launch-row { display: flex; gap: 12px; }
+  .launch-btn { flex: 1; padding: 16px 10px; border-radius: 12px; font-family: 'Work Sans', sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+  .launch-btn.launch-primary { background: transparent; border-color: var(--accent); color: var(--accent); }
+  .launch-btn:hover { transform: translateY(-1px); }
+
+  /* ---- home sub-screens (Scan, Sort It) ---- */
+  .subview-head { display: flex; align-items: center; gap: 12px; background: none; border: none; padding: 0; color: var(--ink); font-family: 'Work Sans', sans-serif; font-size: 18px; font-weight: 600; cursor: pointer; text-align: left; }
+  .subview-head .chev { font-size: 28px; line-height: 1; color: var(--ink); margin-top: -3px; }
+  .scan-photo { position: relative; min-height: 180px; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; border-radius: 14px; }
+  .scan-photo:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .scan-photo-idle { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--ink-faint); font-size: 11.5px; text-align: center; padding: 16px; }
+  .scan-photo-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .scan-result-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .scan-result-card .guide-title { font-size: 19px; }
+  .scan-result-card .guide-body { font-size: 14px; line-height: 1.55; }
+  .scan-actions { display: flex; gap: 10px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .scan-actions .launch-btn, .scan-actions .hero-btn { flex: 1; padding: 12px 8px; border-radius: 9px; font-size: 12.5px; font-weight: 700; text-transform: none; letter-spacing: 0; }
+  .scan-email-row { display: flex; gap: 8px; align-items: center; }
+  .scan-email-row .claim-select { flex: 1; min-width: 0; }
+  .scan-footnote { font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
+
+  /* ---- roster tab (Timetable & roster) ---- */
+  .page-title { font-size: 18px; font-weight: 600; color: var(--ink); }
+  .tw-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
+  .tw-name { flex: 1; font-weight: 700; color: var(--accent); }
+  .tw-badges { margin: 0; gap: 6px; }
+  .tw-badges .badge, .upcoming-row .badge { border: none; color: var(--accent-ink); padding: 5px 10px; font-size: 11px; }
+  .tw-badges .badge .dot, .upcoming-row .badge .dot { display: none; }
+  .upcoming-list { display: flex; flex-direction: column; gap: 8px; }
+  .upcoming-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; }
+  .date-tile { width: 40px; flex: none; text-align: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 0; }
+  .date-tile .dt-dow { font-size: 8px; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; }
+  .date-tile .dt-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; line-height: 1; margin-top: 2px; }
+  .upcoming-row .badge-row { flex: 1; margin: 0; gap: 6px; }
+  .upcoming-row .up-rel { font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
+  .upcoming-row .up-rel.tonight { color: var(--accent); font-weight: 600; }
+  .upcoming-empty { font-size: 12px; color: var(--ink-faint); }
+  .rotation-list { display: flex; flex-direction: column; gap: 8px; }
+  .rotation-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; }
+  .rotation-row .avatar { width: 36px; height: 36px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 13px; }
+  .rotation-row.subscribed .avatar::after { content: ""; position: absolute; top: -2px; right: -2px; bottom: auto; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
+  .rotation-row .rr-text { flex: 1; min-width: 0; }
+  .rotation-row .rr-name { font-size: 14px; font-weight: 600; }
+  .rotation-row .rr-occ { font-size: 11px; color: var(--ink-faint); }
+  .rotation-row .rr-when { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
+  .rotation-row .chip-remove { background: none; border: none; color: var(--ink-faint); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 0 0 4px; }
+  .rotation-row .chip-remove:hover { color: var(--wrong); }
+  .sub-legend { font-size: 10.5px; color: var(--ink-faint); }
+
+  /* ---- rewards tab ---- */
+  .balance-card { text-align: center; padding: 20px 18px; }
+  .balance-card .balance-num { font-size: 44px; }
+  .balance-sub { font-size: 11.5px; color: var(--ink-faint); line-height: 1.45; margin-top: 8px; }
+  .row-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .row-head-r { font-size: 10.5px; color: var(--ink-faint); }
+  .lb-list { display: flex; flex-direction: column; gap: 8px; }
+  .lb-list .lb-row { padding: 10px 14px; border-radius: 12px; gap: 12px; }
+  .lb-list .lb-rank { color: var(--ink-faint); font-size: 14px; }
+  .lb-list .lb-avatar { width: 28px; height: 28px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 11px; }
+  .lb-list .lb-row.mine .lb-avatar { background: var(--accent) !important; color: var(--accent-ink); border: none; }
+  .lb-list .lb-coins { color: var(--ink); font-size: 16px; }
+  .lb-list .lb-row.top .lb-coins { color: var(--accent); }
+  .lb-list .lb-row.mine { border-color: var(--accent); background: var(--surface); }
+  .achv-note { font-size: 11.5px; color: var(--accent); }
+  .achv-note.muted { color: var(--ink-faint); }
+  .donate-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .rewards-foot { text-align: center; font-size: 11.5px; color: var(--ink-faint); padding-top: 8px; }
+
+  /* ---- Sort It sub-screen (quiz + bin guide) ---- */
+  .quiz-head { display: flex; align-items: center; justify-content: space-between; }
+  .quiz-counter { font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--accent); letter-spacing: 0.05em; }
+  .quiz-bar { height: 6px; background: var(--surface); border-radius: 999px; overflow: hidden; }
+  .quiz-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.25s ease; }
+  .quiz-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; transition: background 0.2s ease, border-color 0.2s ease; }
+  .quiz-item-icon { color: var(--accent); flex: none; }
+  .quiz-item-name { font-size: 15px; font-weight: 700; }
+  .quiz-item-sub { font-size: 11px; color: var(--ink-faint); }
+  .quiz-item.correct { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+  .quiz-item.wrong { border-color: var(--wrong); background: color-mix(in srgb, var(--wrong) 14%, var(--surface)); }
+  @media (prefers-reduced-motion: no-preference) { .quiz-item.pulse { animation: pulse 0.28s ease; } }
+  .bin-buttons { display: flex; gap: 6px; }
+  .bin-btn { flex: 1; padding: 9px 2px; min-height: 36px; font-size: 10px; border-radius: 8px; white-space: nowrap; }
+  .game-foot { align-items: flex-start; }
+  .quiz-next { padding: 8px 14px; font-size: 12px; flex: none; }
+  .guide-block { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .nw-head { margin-top: 4px; }
+  .dropoff-card { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .dropoff-title { font-size: 12px; font-weight: 700; color: var(--accent); }
+  .dropoff-line { font-size: 11.5px; color: var(--ink-soft); line-height: 1.5; }
+  .quiz-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 999px; font-size: 12px; color: var(--ink-soft); }
+  .quiz-foot-r { color: var(--ink-faint); }
+
+  /* ---- you tab ---- */
+  .profile-head { margin-bottom: 0; }
+  .profile-avatar { background: var(--accent) !important; color: var(--accent-ink); border: none; }
+  .profile-stats { margin-bottom: 0; }
+  .me-picker { display: flex; flex-direction: column; gap: 8px; }
+  .me-picker .claim-select { align-self: flex-start; }
+  .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
+  #occupationRow .eyebrow { margin-bottom: 8px; }
+  .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  #subscribeForm { display: flex; flex-direction: column; gap: 8px; }
+  #subscribeForm .claim-row .claim-select { flex: 1; min-width: 0; }
+  .sub-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .sub-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bin-v); flex: none; }
+  .sub-email { font-size: 12px; color: var(--ink-faint); }
+  .sub-bonus { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--ink-soft); }
+  .sub-bonus b { color: var(--accent); }
+  .sub-unsub { align-self: flex-start; background: none; border: none; padding: 0; color: var(--accent); font-family: 'Work Sans', sans-serif; font-size: 12px; cursor: pointer; }
+
+  /* ---- donate / me picker ---- */
+  #meCard .claim-row, #donateCard .claim-row { align-items: center; }
+  .profile-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+  .profile-avatar { width: 54px; height: 54px; font-size: 22px; border-width: 1px; font-family: 'Bebas Neue', sans-serif; }
+  .profile-id { flex: 1; min-width: 0; }
+  .profile-name { font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: 24px; letter-spacing: 0.03em; line-height: 1; }
+  .profile-since { font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
+  .profile-edit { background: none; border: none; padding: 4px 0; color: var(--accent); font-family: 'Work Sans', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .profile-edit-panel { display: flex; flex-direction: column; gap: 14px; }
+  .profile-stats { display: flex; gap: 10px; margin-bottom: 16px; }
+  .profile-stat { flex: 1; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; text-align: center; font-size: 10px; color: var(--ink-faint); }
+  .profile-stat-num { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--accent); }
 </style>
 </head>
 <body>
+<div class="hazard-bar hazard-top"></div>
 <div class="wrap" id="app">
-
-  <select class="lang-select" id="langSelect"></select>
 
   <div class="masthead">
     <h1>Bin Duty</h1>
-    <div class="today mono" id="todayLabel"></div>
-  </div>
-  <div class="hazard-bar"></div>
-  <div class="stakes"><strong data-i18n="stakesStrong"></strong> <span data-i18n="stakesRest"></span></div>
-
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="gameHeading"></h2>
-      <div class="section-note" data-i18n="gameNote"></div>
-    </div>
-    <div class="game-card poster poster-a">
-      <div class="game-stats">
-        <span><span data-i18n="scoreLabel"></span><b id="gScore">0</b></span>
-        <span><span data-i18n="streakLabel"></span><b id="gStreak">0</b></span>
-        <span><span data-i18n="bestLabel"></span><b id="gBest">0</b></span>
-      </div>
-      <div class="game-item" id="gameItem">
-        <div class="item-eyebrow" id="gEyebrow" data-i18n="whereGoes"></div>
-        <div class="item-name" id="gItemName"></div>
-      </div>
-      <div class="bin-buttons" id="binButtons"></div>
-      <div class="game-feedback" id="gFeedback"></div>
-      <div class="game-foot">
-        <span class="game-progress" id="gProgress"></span>
-        <button class="stamp-btn" id="gNextBtn" type="button" disabled data-i18n="next"></button>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="scanHeading"></h2>
-      <div class="section-note" data-i18n="scanNote"></div>
-    </div>
-    <div class="scan-card poster poster-b" id="scanCard">
-      <label class="scan-drop" id="scanLabel" for="scanInput">
-        <span id="scanLabelText" data-i18n="scanPrompt"></span>
-      </label>
-      <input type="file" id="scanInput" accept="image/*" capture="environment" hidden>
-      <div class="claim-status" data-i18n="scanDisclosure"></div>
-      <div class="scan-result" id="scanResult" hidden></div>
-    </div>
-  </section>
-
-  <div class="hero poster poster-c" id="hero">
-    <div class="hero-row">
-      <div class="hero-cell">
-        <div class="eyebrow" data-i18n="todayLabel"></div>
-        <div class="date mono" id="todayDate"></div>
-        <div class="badge-row" id="todayBadges"></div>
-      </div>
-      <div class="hero-cell">
-        <div class="eyebrow" data-i18n="tonightLabel"></div>
-        <div class="date mono" id="tomorrowDate"></div>
-        <div class="badge-row" id="tomorrowBadges"></div>
-      </div>
-    </div>
-    <div class="hero-divider"></div>
-    <div class="hero-foot" data-i18n="heroFoot"></div>
-    <div class="hero-foot" id="outOfRangeNote" style="color:var(--wrong)" hidden></div>
+    <div class="today" id="todayLabel"></div>
   </div>
 
-  <section>
-    <div class="section-head"><h2 data-i18n="next7Heading"></h2></div>
-    <div class="strip" id="weekStrip"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="dutyHeading"></h2>
-      <div class="section-note" data-i18n="dutyNote"></div>
-    </div>
-    <div class="duty-card poster poster-d">
-      <div class="duty-row">
-        <div class="avatar" id="dutyAvatar"></div>
-        <div>
-          <div class="duty-name" id="dutyName"></div>
-          <div class="duty-sub" data-i18n="dutySub"></div>
-        </div>
-        <div class="duty-tag" data-i18n="thisWeekTag"></div>
-      </div>
-      <div class="duty-next" id="dutyNext"></div>
-      <div class="roster-strip" id="rosterStrip"></div>
-      <div class="roster-add-row">
-        <input type="text" id="addNameInput" class="claim-select" maxlength="40" placeholder="Add a housemate…">
-        <button class="stamp-btn ghost" id="addNameBtn" type="button">+</button>
-      </div>
-      <div class="copy-hint" id="rosterMsg"></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="rewardsHeading"></h2>
-      <div class="section-note" data-i18n="rewardsNote"></div>
-    </div>
-    <div class="rewards-card poster poster-b" id="rewardsCard">
+  <section data-view="home" id="homeDashboard">
+    <div class="poster hero-card" id="homeHero">
       <div class="task-info" id="taskInfo">
         <div class="eyebrow" id="taskDateLabel"></div>
         <div class="badge-row" id="taskBadges"></div>
       </div>
-      <div class="claim-status" id="claimStatus"></div>
-      <div class="claim-row" id="outRow" hidden>
+      <div class="duty-row hero-duty" id="homeDutyRow">
+        <div class="avatar hero-avatar" id="homeDutyAvatar"></div>
+        <div class="hero-status" id="claimStatus"></div>
+      </div>
+      <div class="claim-row hero-action" id="outRow" hidden>
         <select class="claim-select" id="outNameSelect"></select>
-        <button class="stamp-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
+        <button class="stamp-btn hero-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
       </div>
-      <div class="claim-row" id="backRow" hidden>
+      <div class="claim-row hero-action" id="backRow" hidden>
         <select class="claim-select" id="backNameSelect"></select>
-        <button class="stamp-btn" id="backBtn" type="button" data-i18n="confirmBackBtn"></button>
+        <button class="stamp-btn hero-btn" id="backBtn" type="button" data-i18n="confirmBackBtn"></button>
       </div>
-      <div class="leaderboard" id="leaderboard"></div>
+      <div class="reactions-row" id="reactionsRow">
+        <button class="reaction-btn" id="reactHeart" type="button" data-emoji="heart">&#10084;&#65039; <span id="reactHeartCount">0</span></button>
+        <button class="reaction-btn" id="reactUp" type="button" data-emoji="up">&#128077; <span id="reactUpCount">0</span></button>
+        <button class="reaction-btn" id="reactDown" type="button" data-emoji="down">&#128078; <span id="reactDownCount">0</span></button>
+        <button class="reaction-hint" id="reactionHint" type="button"></button>
+      </div>
+    </div>
+
+    <div class="poster this-week" id="thisWeekCard">
+      <div class="eyebrow" data-i18n="thisWeekHeading"></div>
+      <div class="this-week-sub" data-i18n="thisWeekSub"></div>
+      <div class="this-week-rows" id="thisWeekList"></div>
+      <button class="this-week-more" id="fullCalendarJumpBtn" type="button"><span data-i18n="seeFullCalendar"></span> &#9662;</button>
+    </div>
+
+    <div>
+      <div class="eyebrow" style="margin-bottom:10px;" data-i18n="houseRosterHeading"></div>
+      <div class="roster-avatars" id="rosterStripHome"></div>
+    </div>
+
+    <div class="poster coins-pill" id="homeCoinsPill">
+      <div class="coins-pill-icon" id="homeCoinsAvatar">S</div>
+      <div class="coins-pill-label" id="homeCoinsLabel"></div>
+      <button class="coins-pill-link" id="rewardsJumpBtn" type="button" data-i18n="rewardsJump"></button>
+    </div>
+
+    <div class="launch-row">
+      <button class="launch-btn launch-primary" id="scanLaunchBtn" type="button" data-i18n="scanLaunch"></button>
+      <button class="launch-btn" id="sortItLaunchBtn" type="button" data-i18n="sortItLaunch"></button>
     </div>
   </section>
 
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="notifyHeading"></h2>
-      <div class="section-note" data-i18n="notifyNote"></div>
+  <section data-view="home" id="sortItSubview" hidden>
+    <div class="quiz-head">
+      <button class="subview-head" id="sortItBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="gameHeading"></span></button>
+      <span class="quiz-counter" id="gProgress"></span>
     </div>
-    <div class="rewards-card poster poster-c" id="notifyCard">
-      <div class="claim-row">
-        <select class="claim-select" id="notifyNameSelect"></select>
-        <input type="email" class="claim-select" id="notifyEmailInput" data-i18n-placeholder="emailPlaceholder">
-        <select class="claim-select" id="notifyLangSelect"></select>
-        <button class="stamp-btn" id="notifySubscribeBtn" type="button" data-i18n="subscribeBtn"></button>
+    <div class="quiz-bar"><div class="quiz-bar-fill" id="gBar"></div></div>
+    <div class="game-stats" hidden>
+      <span><b id="gScore">0</b></span>
+      <span><b id="gBest">0</b></span>
+    </div>
+    <div class="poster quiz-item" id="gameItem">
+      <svg class="quiz-item-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 3h10l-1 5a4 4 0 01-8 0L7 3z"></path><path d="M9 8v9a2 2 0 002 2h2a2 2 0 002-2V8"></path></svg>
+      <div>
+        <div class="quiz-item-name" id="gItemName"></div>
+        <div class="quiz-item-sub" id="gEyebrow" data-i18n="tapRightBin"></div>
       </div>
-      <div class="claim-status" id="notifyStatus"></div>
-      <div class="leaderboard" id="notifyList"></div>
-      <div class="claim-row">
-        <input type="email" class="claim-select" id="unsubEmailInput" data-i18n-placeholder="unsubscribeEmailPlaceholder">
-        <button class="stamp-btn ghost" id="unsubBtn" type="button" data-i18n="unsubscribeBtn"></button>
+    </div>
+    <div class="bin-buttons" id="binButtons"></div>
+    <div class="game-foot">
+      <div class="game-feedback" id="gFeedback"></div>
+      <button class="stamp-btn quiz-next" id="gNextBtn" type="button" disabled data-i18n="next"></button>
+    </div>
+
+    <div class="guide-block">
+      <div class="eyebrow" data-i18n="whatGoesHeading"></div>
+      <div class="guide-grid" id="guideGrid"></div>
+      <div class="eyebrow nw-head" data-i18n="notWeeklyHeading"></div>
+      <div class="guide-grid">
+        <div class="guide-card"><span class="guide-letter" style="background:#B08A6E"></span><div><span class="guide-title" data-i18n="bulkyName"></span> <span class="guide-body" style="display:inline;" data-i18n="bulkyDesc"></span></div></div>
+        <div class="guide-card"><span class="guide-letter" style="background:#FF7A45"></span><div><span class="guide-title" data-i18n="hazardousName"></span> <span class="guide-body" style="display:inline;" data-i18n="hazardousDesc"></span></div></div>
+        <div class="guide-card"><span class="guide-letter" style="background:#8A7FBF"></span><div><span class="guide-title" data-i18n="specialName"></span> <span class="guide-body" style="display:inline;" data-i18n="specialDesc"></span></div></div>
       </div>
+      <div class="poster dropoff-card">
+        <div class="dropoff-title" data-i18n="dropOffTitle"></div>
+        <div class="dropoff-line">Rue d'Ostende, L-2221 Luxembourg &middot; Tue&ndash;Sat, 9:00&ndash;18:30</div>
+        <div class="dropoff-line"><span data-i18n="rcFromLabel"></span>: <span data-i18n="rcFromVal"></span></div>
+        <div class="dropoff-line"><span data-i18n="rcAlsoLabel"></span>: <span data-i18n="rcAlsoVal"></span></div>
+      </div>
+      <div class="verify-note" id="verifyNote"></div>
+    </div>
+
+    <div class="poster quiz-foot">
+      <span><span data-i18n="streakLabel"></span>: <b id="gStreak">0</b></span>
+      <span class="quiz-foot-r" data-i18n="perfectRoundNote"></span>
     </div>
   </section>
 
-  <section>
-    <div class="section-head">
-      <h2 data-i18n="whatGoesHeading"></h2>
-      <div class="section-note" data-i18n="whatGoesNote"></div>
-    </div>
-    <div class="verify-note" id="verifyNote"></div>
-    <div class="guide-grid" id="guideGrid"></div>
+  <section data-view="home" id="scanSubview" hidden>
+    <button class="subview-head" id="scanBackBtn" type="button"><span class="chev">&#8249;</span><span id="scanTitle" data-i18n="scanScreenTitle"></span></button>
+    <label class="poster scan-photo" id="scanLabel" for="scanInput">
+      <span class="scan-photo-idle" id="scanPhotoIdle">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.4"></circle></svg>
+        <span id="scanLabelText" data-i18n="scanPrompt"></span>
+      </span>
+      <img id="scanThumb" class="scan-photo-img" alt="" hidden>
+    </label>
+    <input type="file" id="scanInput" accept="image/*" capture="environment" hidden>
+    <div class="poster scan-result-card" id="scanResult" hidden></div>
+    <div class="scan-footnote" data-i18n="scanDisclosure"></div>
   </section>
 
-  <section>
+  <section data-view="roster">
+    <div class="page-title" data-i18n="rosterPageTitle"></div>
+    <div class="poster tw-card">
+      <span class="eyebrow" data-i18n="thisWeekHeading"></span>
+      <span class="tw-name" id="dutyName"></span>
+      <span class="badge-row tw-badges" id="weekBadges"></span>
+    </div>
+    <div class="eyebrow" data-i18n="upcomingHeading"></div>
+    <div class="upcoming-list" id="upcomingList"></div>
+  </section>
+
+  <section data-view="roster">
+    <div class="eyebrow" data-i18n="rotationHeading"></div>
+    <div class="rotation-list" id="rosterStrip"></div>
+    <div class="roster-add-row">
+      <input type="text" id="addNameInput" class="claim-select" maxlength="40" placeholder="Add a housemate…">
+      <button class="stamp-btn ghost" id="addNameBtn" type="button">+</button>
+    </div>
+    <div class="copy-hint" id="rosterMsg"></div>
+    <div class="sub-legend" data-i18n="subscribedLegend"></div>
+  </section>
+
+  <section data-view="roster">
     <div class="section-head"><h2 data-i18n="fullCalendarHeading"></h2></div>
     <div class="legend" id="legendRow"></div>
     <div id="calendarMonths" style="display:flex; flex-direction:column; gap:10px;"></div>
+    <div class="stakes"><strong data-i18n="stakesStrong"></strong> <span data-i18n="stakesRest"></span></div>
   </section>
 
-  <section>
-    <div class="section-head"><h2 data-i18n="bulkyHeading"></h2></div>
-    <div class="rc-card poster poster-a">
-      <div class="rc-row"><span class="k" data-i18n="rcTakesLabel"></span><span class="v" data-i18n="rcTakesVal"></span></div>
-      <div class="rc-row"><span class="k" data-i18n="rcWhereLabel"></span><span class="v">Centre des Ressources — Rue d'Ostende, L-2221 Luxembourg</span></div>
-      <div class="rc-row"><span class="k" data-i18n="rcHoursLabel"></span><span class="v">Tue&ndash;Sat, 9:00&ndash;18:30</span></div>
-      <div class="rc-row"><span class="k" data-i18n="rcFromLabel"></span><span class="v" data-i18n="rcFromVal"></span></div>
-      <div class="rc-row"><span class="k" data-i18n="rcAlsoLabel"></span><span class="v" data-i18n="rcAlsoVal"></span></div>
+  <section data-view="rewards">
+    <div class="page-title" data-i18n="rewardsPageTitle"></div>
+    <div class="poster balance-card" id="balanceHero">
+      <div class="balance-num" id="balanceNum">&mdash;</div>
+      <div class="balance-label" data-i18n="scrapCoinsLabel"></div>
+      <div class="balance-sub" data-i18n="rewardsEarnNote"></div>
+    </div>
+    <div class="row-head">
+      <span class="eyebrow" data-i18n="leaderboardHeading"></span>
+      <span class="row-head-r" data-i18n="leaderboardPeriod"></span>
+    </div>
+    <div class="lb-list" id="leaderboard"></div>
+  </section>
+
+  <section data-view="rewards">
+    <div class="eyebrow" data-i18n="achievementsHeading"></div>
+    <div class="achv-grid" id="achvGrid"></div>
+    <div class="achv-note" id="achvUnlockedMsg"></div>
+  </section>
+
+  <section data-view="rewards">
+    <div class="eyebrow" data-i18n="donateHeading"></div>
+    <div class="poster donate-card" id="donateCard">
+      <div class="claim-row">
+        <select class="claim-select" id="donateToSelect"></select>
+        <input type="number" class="claim-select" id="donateAmountInput" min="1" max="1000" step="1" style="width:90px;" data-i18n-placeholder="donateAmountPlaceholder">
+        <button class="stamp-btn" id="donateBtn" type="button" data-i18n="donateBtn"></button>
+      </div>
+      <div class="claim-status" id="donateStatus"></div>
+    </div>
+    <div class="rewards-foot" data-i18n="rewardsFoot"></div>
+  </section>
+
+  <section data-view="you">
+    <div class="page-title" data-i18n="youPageTitle"></div>
+    <div class="profile-head" id="profileHead" hidden>
+      <div class="avatar profile-avatar" id="profileAvatar"></div>
+      <div class="profile-id">
+        <div class="profile-name" id="profileName"></div>
+        <div class="profile-since" id="profileSince"></div>
+      </div>
+      <button class="profile-edit" id="profileEditBtn" type="button" hidden></button>
+    </div>
+    <div class="profile-stats" id="profileStats" hidden>
+      <div class="profile-stat"><div class="profile-stat-num" id="statTurns">0</div><div data-i18n="statTurnsLabel"></div></div>
+      <div class="profile-stat"><div class="profile-stat-num" id="statCoins">0</div><div data-i18n="statCoinsLabel"></div></div>
+      <div class="profile-stat"><div class="profile-stat-num" id="statStreak">0</div><div data-i18n="statStreakLabel"></div></div>
+    </div>
+    <div class="profile-edit-panel" id="profileEdit">
+      <div class="me-picker" id="meCard">
+        <div class="eyebrow" data-i18n="youHeading"></div>
+        <select class="claim-select" id="meSelect"></select>
+        <div class="claim-status" id="meStatus"></div>
+      </div>
+      <div id="occupationRow" hidden>
+        <div class="eyebrow" data-i18n="occupationLabel"></div>
+        <div class="claim-row">
+          <input type="text" id="occupationInput" class="claim-select" maxlength="60" data-i18n-placeholder="occupationPlaceholder">
+          <button class="stamp-btn ghost" id="occupationSaveBtn" type="button" data-i18n="occupationSaveBtn"></button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="eyebrow" data-i18n="languageLabel"></div>
+      <select class="lang-select" id="langSelect"></select>
     </div>
   </section>
 
-  <footer data-i18n="footerText"></footer>
+  <section data-view="you">
+    <div class="eyebrow" data-i18n="emailRemindersLabel"></div>
+    <div class="poster notify-card" id="notifyCard">
+      <div id="subscribedState" hidden>
+        <div class="sub-status"><span class="sub-dot"></span><span data-i18n="subscribedWord"></span></div>
+        <div class="sub-email" id="subEmail"></div>
+        <div class="sub-bonus" id="subBonus" hidden><b>+10</b> <span data-i18n="subBonusNote"></span></div>
+        <button class="sub-unsub" id="unsubBtn" type="button" data-i18n="unsubscribeBtn"></button>
+      </div>
+      <div id="subscribeForm">
+        <div class="claim-status" id="subscribePickNote" data-i18n="notifyPickNameFirst" hidden></div>
+        <div id="subscribeFields">
+          <div class="claim-row">
+            <input type="email" class="claim-select" id="notifyEmailInput" data-i18n-placeholder="emailPlaceholder">
+          </div>
+          <div class="claim-row">
+            <select class="claim-select" id="notifyLangSelect"></select>
+            <button class="stamp-btn" id="notifySubscribeBtn" type="button" data-i18n="subscribeBtn"></button>
+          </div>
+        </div>
+      </div>
+      <div class="claim-status" id="notifyStatus"></div>
+    </div>
+  </section>
+
+  <footer data-i18n="footerText" data-view="roster"></footer>
 </div>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab-btn" type="button" data-goto="home"><span class="tab-icon"></span><span data-i18n="tabHome"></span></button>
+  <button class="tab-btn" type="button" data-goto="roster"><span class="tab-icon"></span><span data-i18n="tabRoster"></span></button>
+  <button class="tab-btn" type="button" data-goto="rewards"><span class="tab-icon"></span><span data-i18n="tabRewards"></span></button>
+  <button class="tab-btn" type="button" data-goto="you"><span class="tab-icon"></span><span data-i18n="tabYou"></span></button>
+</nav>
 
 <script src="/i18n.js"></script>
 <script src="/app.js"></script>
