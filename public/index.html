@@ -492,7 +492,10 @@
   .balance-sub { font-size: 11.5px; color: var(--ink-faint); line-height: 1.45; margin-top: 8px; }
   .row-head { display: flex; align-items: baseline; justify-content: space-between; }
   .row-head-r { font-size: 10.5px; color: var(--ink-faint); }
-  .lb-list { display: flex; flex-direction: column; gap: 8px; }
+  /* Shows exactly 3 rows (row height ~48px: 28px avatar + 20px padding,
+     plus 8px gaps between them); the rest scroll instead of growing the
+     page with every housemate on the leaderboard. */
+  .lb-list { display: flex; flex-direction: column; gap: 8px; max-height: 168px; overflow-y: auto; overscroll-behavior: contain; }
   .lb-list .lb-row { padding: 10px 14px; border-radius: 12px; gap: 12px; }
   .lb-list .lb-rank { color: var(--ink-faint); font-size: 14px; }
   .lb-list .lb-avatar { width: 28px; height: 28px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 11px; }
