@@ -1806,19 +1806,19 @@
         renderReactionCounts(data.counts, mine);
       })
       .catch(function () {});
-    reactionHintEl.textContent = ME ? tr("donateHeading") : tr("reactionHint");
-    reactionHintEl.classList.toggle("donate", !!ME);
+    // Always the donate prompt now, whether or not a name is picked yet —
+    // clicking it jumps to Rewards, which itself asks for a name first if
+    // one isn't set (see meNotPickedForDonate).
+    reactionHintEl.textContent = tr("donateHeading");
+    reactionHintEl.classList.add("donate");
   }
   reactionHintEl.addEventListener("click", function () {
-    if (ME) showView("rewards");
+    showView("rewards");
   });
 
   Object.keys(reactButtons).forEach(function (emoji) {
     reactButtons[emoji].addEventListener("click", function () {
-      if (!ME) {
-        reactionHintEl.textContent = tr("reactionHint");
-        return;
-      }
+      if (!ME) return;
       fetch(api("/api/reactions/" + reactionDateKey()), {
         method: "POST",
         headers: { "content-type": "application/json" },

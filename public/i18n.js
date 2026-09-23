@@ -65,7 +65,6 @@ window.T = {
     swapBtn: "Can't do it? Ask for a swap",
     rewardsHeading: "Scrap rewards", rewardsNote: "+10 Scrap for whoever actually took it out",
     tabHome: "Home", tabRoster: "Roster", tabRewards: "Rewards", tabYou: "You",
-    reactionHint: "Pick who you are on the You tab to react",
     achievementsHeading: "Achievements", achievementsNote: "Badges you've earned around the house",
     meNotPickedForAchievements: "Pick who you are on the You tab to see your badges.",
     achievementUnlocked: "Achievement unlocked",
