@@ -223,6 +223,146 @@
     nextWeek = personForWeek(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7));
   }
 
+  // ---- custom-themed dropdowns: a native <select>'s open popup can't be
+  // styled with CSS in any browser, so every select in the app gets
+  // wrapped in a small custom trigger + popup that IS themed, matching
+  // the rest of the UI. The real <select> stays in the DOM (hidden,
+  // display:none) as the actual value-holder — every existing call site
+  // elsewhere in this file keeps reading/writing .value and listening for
+  // "change" on it exactly as before; this only replaces how it's shown
+  // and clicked. Options are re-read from the select fresh each time the
+  // popup opens, so it always reflects whatever the many render*Select
+  // functions below have just filled it with. ----
+  function enhanceSelect(select) {
+    if (select.dataset.enhanced) return;
+    select.dataset.enhanced = "1";
+    var baseClass = select.className;
+
+    var wrap = document.createElement("span");
+    wrap.className = "select-wrap"; // display:contents — invisible to layout, so every
+    select.parentNode.insertBefore(wrap, select); // existing contextual rule on .claim-select/
+    wrap.appendChild(select);                     // .lang-select still matches the trigger below
+    select.classList.add("select-native");
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
+
+    var trigger = document.createElement("div");
+    // The real select is already display:none unconditionally (see
+    // .select-native), so its own .hidden no longer has any visible
+    // effect. Existing code all over this file still sets
+    // outNameSelect.hidden = ... etc. to show/hide the whole control
+    // depending on app state — this keeps that working by mirroring
+    // every such assignment onto the trigger, which is what's actually
+    // shown or hidden now.
+    var nativeHidden = select.hidden;
+    Object.defineProperty(select, "hidden", {
+      configurable: true,
+      get: function () { return nativeHidden; },
+      set: function (v) { nativeHidden = !!v; trigger.hidden = nativeHidden; }
+    });
+    trigger.className = baseClass + " select-trigger";
+    trigger.setAttribute("role", "button");
+    trigger.tabIndex = 0;
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    var labelSpan = document.createElement("span");
+    labelSpan.className = "select-trigger-label";
+    var chev = document.createElement("span");
+    chev.className = "select-chev";
+    var popup = document.createElement("div");
+    popup.className = "select-popup";
+    popup.setAttribute("role", "listbox");
+    popup.hidden = true;
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(chev);
+    trigger.appendChild(popup);
+    wrap.appendChild(trigger);
+
+    var activeIndex = -1;
+
+    function sync() {
+      var opt = select.options[select.selectedIndex];
+      labelSpan.textContent = opt ? opt.textContent : "";
+    }
+    select._syncTrigger = sync;
+
+    function setActive(i) {
+      var rows = popup.children;
+      if (activeIndex >= 0 && rows[activeIndex]) rows[activeIndex].classList.remove("active");
+      activeIndex = ((i % rows.length) + rows.length) % rows.length;
+      if (rows[activeIndex]) {
+        rows[activeIndex].classList.add("active");
+        rows[activeIndex].scrollIntoView({ block: "nearest" });
+      }
+    }
+    function commit(i) {
+      select.selectedIndex = i;
+      sync();
+      close();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function close() {
+      trigger.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+      popup.hidden = true;
+    }
+    function open() {
+      popup.innerHTML = "";
+      activeIndex = select.selectedIndex;
+      Array.prototype.forEach.call(select.options, function (opt, i) {
+        var row = document.createElement("div");
+        row.className = "select-option" + (i === select.selectedIndex ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.textContent = opt.textContent;
+        row.addEventListener("click", function (ev) { ev.stopPropagation(); commit(i); });
+        popup.appendChild(row);
+      });
+      trigger.classList.remove("drop-up");
+      popup.hidden = false;
+      trigger.classList.add("open");
+      trigger.setAttribute("aria-expanded", "true");
+      // Flip above the trigger when there isn't room below (a picker
+      // opened from near the bottom tab bar, most often).
+      if (popup.getBoundingClientRect().bottom > window.innerHeight - 12) trigger.classList.add("drop-up");
+      setActive(activeIndex);
+    }
+
+    trigger.addEventListener("click", function () {
+      if (trigger.classList.contains("open")) close(); else open();
+    });
+    trigger.addEventListener("keydown", function (ev) {
+      var isOpen = trigger.classList.contains("open");
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        if (isOpen) commit(activeIndex); else open();
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        if (isOpen) setActive(activeIndex + 1); else open();
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        if (isOpen) setActive(activeIndex - 1); else open();
+      } else if (ev.key === "Escape" && isOpen) {
+        ev.preventDefault();
+        close();
+      } else if (ev.key === "Home" && isOpen) {
+        ev.preventDefault();
+        setActive(0);
+      } else if (ev.key === "End" && isOpen) {
+        ev.preventDefault();
+        setActive(popup.children.length - 1);
+      }
+    });
+    document.addEventListener("click", function (ev) {
+      if (!wrap.contains(ev.target)) close();
+    });
+
+    sync();
+  }
+  function syncSelectTrigger(select) {
+    if (select && select._syncTrigger) select._syncTrigger();
+  }
+  document.querySelectorAll("select.claim-select, select.lang-select").forEach(enhanceSelect);
+
   // ---- language switcher ----
   var langSelect = document.getElementById("langSelect");
   var langSelectBuilt = false;
@@ -242,6 +382,7 @@
       langSelectBuilt = true;
     }
     langSelect.value = currentLang;
+    syncSelectTrigger(langSelect);
   }
 
   // ---- tabbed views (phone width) — every [data-view] section stays in
@@ -1096,6 +1237,7 @@
     });
     var fallback = preferredName && ROSTER.includes(preferredName) ? preferredName : ROSTER[0];
     select.value = current && ROSTER.includes(current) ? current : fallback;
+    syncSelectTrigger(select);
   }
 
   function renderTaskForm() {
@@ -1405,6 +1547,7 @@
       notifyLangSelect.appendChild(opt);
     });
     notifyLangSelect.value = currentSubLang || currentLang;
+    syncSelectTrigger(notifyLangSelect);
   }
 
   // Who's subscribed (names only) — drives the dot on roster avatars.
@@ -1743,6 +1886,7 @@
     });
     meSelect.value = current && ROSTER.includes(current) ? current : "";
     if (meSelect.value !== current) setMe(meSelect.value);
+    syncSelectTrigger(meSelect);
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
   }
@@ -1895,6 +2039,7 @@
       donateToSelect.appendChild(opt);
     });
     donateToSelect.value = current || (donateToSelect.options[0] && donateToSelect.options[0].value) || "";
+    syncSelectTrigger(donateToSelect);
     donateBtn.disabled = !ME;
     donateStatus.textContent = ME ? "" : tr("meNotPickedForDonate");
   }

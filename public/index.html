@@ -194,6 +194,36 @@
     background: var(--surface-2); border: 2px solid var(--line); border-radius: 6px; padding: 9px 10px;
   }
   .claim-status { font-size: 13px; color: var(--ink-soft); }
+
+  /* ---- custom-themed dropdown (replaces every native <select> popup,
+     which no browser lets CSS reach) — see enhanceSelect() in app.js ---- */
+  .select-wrap { display: contents; }
+  .select-native { display: none; }
+  .select-trigger {
+    position: relative; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; cursor: pointer; user-select: none;
+  }
+  .select-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .select-trigger.open { border-color: var(--accent); }
+  .select-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-chev {
+    flex: none; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    opacity: 0.6; transform: rotate(45deg) translateY(-2px); transition: transform 0.15s ease;
+  }
+  .select-trigger.open .select-chev { transform: rotate(-135deg) translateY(1px); }
+  .select-popup {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 200;
+    max-height: 240px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .select-popup[hidden] { display: none; }
+  .select-trigger.drop-up .select-popup { top: auto; bottom: calc(100% + 6px); }
+  .select-option {
+    padding: 9px 11px; border-radius: 7px; font-family: 'Work Sans', sans-serif; font-size: 13px;
+    font-weight: 600; color: var(--ink);
+  }
+  .select-option.active { background: var(--surface-2); }
+  .select-option.selected { color: var(--accent); }
   .leaderboard { display: flex; flex-direction: column; gap: 7px; padding-top: 12px; border-top: 1px dashed var(--line); }
   .lb-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; }
   .lb-row.mine { border-color: var(--accent); background: var(--accent-soft); }
