@@ -5,6 +5,7 @@
 process.env.TZ = process.env.TZ || "Europe/Luxembourg";
 
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 // Always load the .env at the repo root, regardless of the process's cwd —
 // relying on dotenv's cwd-relative default silently picks up the wrong file
@@ -15,7 +16,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const cron = require("node-cron");
-const { getDb, DEFAULT_SLUG, destroyHouseDb } = require("./db");
+const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
@@ -309,37 +310,128 @@ app.delete("/api/roster/:name", writeLimiter, (req, res) => {
   res.json(currentRoster(req.house.db));
 });
 
-// --- Bin duty tasks: two-step out/back confirmation ---
+// --- Bin duty tasks: two-step out/back confirmation, each optionally with
+// a proof photo (bin at the curb / bin back in place) ---
+const PHOTO_MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heic" };
+
+function savePhoto(house, dateKey, which, buffer, mime) {
+  const ext = PHOTO_MIME_EXT[mime] || "jpg";
+  const filename = `${dateKey}-${which}.${ext}`;
+  fs.writeFileSync(path.join(taskPhotoDir(house.slug), filename), buffer);
+  return filename;
+}
+
+function deletePhotoFile(house, filename) {
+  if (!filename) return;
+  const file = path.join(taskPhotoDir(house.slug), filename);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
+// A proof photo only needs to outlive its own collection cycle: once a new
+// task with the SAME codes is confirmed out, every older task sharing those
+// codes has its photos deleted (file + columns) — "stored until the next
+// same-kind collection", not kept forever.
+function cleanupOldPhotos(house, codes, beforeDateKey) {
+  const rows = house.db.prepare(
+    "SELECT date_key, out_photo, back_photo FROM tasks WHERE codes = ? AND date_key < ? AND (out_photo IS NOT NULL OR back_photo IS NOT NULL)"
+  ).all(codes, beforeDateKey);
+  if (!rows.length) return;
+  rows.forEach((r) => {
+    deletePhotoFile(house, r.out_photo);
+    deletePhotoFile(house, r.back_photo);
+  });
+  house.db.prepare(
+    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, back_photo = NULL, back_photo_mime = NULL WHERE codes = ? AND date_key < ?"
+  ).run(codes, beforeDateKey);
+}
+
 app.get("/api/tasks/current", (req, res) => {
   res.json(getCurrentTask(req.house.db, new Date(), flatScheduleFor(req.house)));
 });
 
 app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
-  const name = req.body && req.body.name;
-  try {
-    res.json(confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house)));
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
-  }
+  upload.single("photo")(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
+    }
+    const name = req.body && req.body.name;
+    try {
+      const row = confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
+      if (req.file) {
+        const filename = savePhoto(req.house, req.params.dateKey, "out", req.file.buffer, req.file.mimetype);
+        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, req.params.dateKey);
+        row.out_photo = filename;
+        row.out_photo_mime = req.file.mimetype;
+      }
+      cleanupOldPhotos(req.house, row.codes, req.params.dateKey);
+      res.json(row);
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
 });
 
 app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
-  const name = req.body && req.body.name;
-  try {
-    const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
-    // Coins go to whoever took the bin OUT (matches how the leaderboard has
-    // always credited a task — see coin_ledger's backfill in db.js), not
-    // necessarily whoever confirmed it back, since those can be different
-    // people.
-    const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
-    res.json({ ...row, unlocked });
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
-  }
+  upload.single("photo")(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
+    }
+    const name = req.body && req.body.name;
+    try {
+      const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
+      if (req.file) {
+        const filename = savePhoto(req.house, req.params.dateKey, "back", req.file.buffer, req.file.mimetype);
+        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, req.params.dateKey);
+        row.back_photo = filename;
+        row.back_photo_mime = req.file.mimetype;
+      }
+      // Coins go to whoever took the bin OUT (matches how the leaderboard has
+      // always credited a task — see coin_ledger's backfill in db.js), not
+      // necessarily whoever confirmed it back, since those can be different
+      // people.
+      const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
+      res.json({ ...row, unlocked });
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+});
+
+// Serves a stored proof photo. 404 with no body when there isn't one —
+// the client treats that as "no photo", not an error worth surfacing.
+app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
+  const which = req.params.which;
+  if (which !== "out" && which !== "back") return res.status(400).end();
+  const row = req.house.db.prepare(
+    `SELECT ${which}_photo AS photo, ${which}_photo_mime AS mime FROM tasks WHERE date_key = ?`
+  ).get(req.params.dateKey);
+  if (!row || !row.photo) return res.status(404).end();
+  const file = path.join(taskPhotoDir(req.house.slug), row.photo);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.set("Cache-Control", "private, max-age=86400");
+  res.type(row.mime || "image/jpeg");
+  fs.createReadStream(file).pipe(res);
 });
 
 app.get("/api/tasks/leaderboard", (req, res) => {
   res.json(coins.getLeaderboard(req.house.db));
+});
+
+// Every task that was ever started, most recent first — the full calendar
+// uses this to show who actually confirmed each collection out/back (not
+// just whose rotation turn it theoretically was) and whether photos exist
+// for it. Capped generously; nobody's calendar needs unbounded history.
+app.get("/api/tasks/history", (req, res) => {
+  const rows = req.house.db.prepare(
+    `SELECT date_key, codes, out_by, out_at, back_by, back_at,
+            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto
+     FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
+  ).all();
+  res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));
 });
 
 // --- Scrap coins: balance/history/achievements for one person, donations,

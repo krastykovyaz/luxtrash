@@ -8,6 +8,9 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const HOUSES_DIR = path.join(DATA_DIR, "houses");
 if (!fs.existsSync(HOUSES_DIR)) fs.mkdirSync(HOUSES_DIR, { recursive: true });
 
+const PHOTOS_DIR = path.join(DATA_DIR, "task-photos");
+if (!fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+
 // The original single house this app was built for keeps its original file
 // and path, completely untouched by multi-house support — no migration, no
 // renaming, zero risk to existing production data. Every other house gets
@@ -33,6 +36,20 @@ function ensureSchema(db, opts) {
       coins INTEGER NOT NULL DEFAULT 10
     )
   `);
+
+  // Proof-of-duty photos: one for the bin out at the curb, one for it back
+  // in place, stored as filenames (the bytes live on disk — see
+  // server/index.js's taskPhotoDir) with the mime type needed to serve them
+  // correctly. Deliberately not kept forever: whenever a new collection of
+  // the same codes is confirmed out, index.js clears every older task's
+  // photos for that same codes value — a photo only has to outlive its own
+  // collection cycle, not the whole house's history.
+  var taskCols = db.prepare("PRAGMA table_info(tasks)").all().map(function (c) { return c.name; });
+  ["out_photo", "out_photo_mime", "back_photo", "back_photo_mime"].forEach(function (col) {
+    if (taskCols.indexOf(col) === -1) {
+      db.exec("ALTER TABLE tasks ADD COLUMN " + col + " TEXT");
+    }
+  });
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS roster (
@@ -176,6 +193,18 @@ function destroyHouseDb(slug) {
     var file = path.join(HOUSES_DIR, slug + ".sqlite" + suffix);
     if (fs.existsSync(file)) fs.unlinkSync(file);
   });
+  var photoDir = path.join(PHOTOS_DIR, slug);
+  if (fs.existsSync(photoDir)) fs.rmSync(photoDir, { recursive: true, force: true });
 }
 
-module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR, destroyHouseDb };
+// Where a house's proof-of-duty photos live on disk — one subfolder per
+// house, named the same way its database file is (the default house's
+// internal sentinel, or a custom house's slug). Created on first use.
+function taskPhotoDir(slug) {
+  var key = !slug || slug === DEFAULT_SLUG ? DEFAULT_SLUG : slug;
+  var dir = path.join(PHOTOS_DIR, key);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR, destroyHouseDb, taskPhotoDir };

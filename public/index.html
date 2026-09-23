@@ -254,6 +254,10 @@
   .cal-cell .dots { display: flex; gap: 2px; min-height: 8px; }
   .cal-cell .dots .dot { width: 7px; height: 7px; }
   .cal-cell .hday { font-size: 8px; color: var(--wrong); font-weight: 700; }
+  .cal-who { font-size: 8px; font-weight: 700; color: var(--ink-soft); background: var(--surface); border-radius: 4px; padding: 1px 4px; line-height: 1.3; }
+  .cal-cam { font-size: 9px; line-height: 1; }
+  .cal-cell.has-photos { cursor: pointer; }
+  .cal-cell.has-photos:hover, .cal-cell.has-photos:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
   /* ---- legend ---- */
   .legend { display: flex; flex-wrap: wrap; gap: 12px 16px; font-size: 12px; color: var(--ink-soft); }
@@ -351,6 +355,17 @@
   .hero-action .claim-select { flex: 1; min-width: 0; }
   .hero-btn { flex: 1; padding: 14px; border-radius: 9px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
   .hero-card .reactions-row { padding-top: 14px; border-top: 1px dashed var(--line); }
+
+  /* ---- optional proof photo on out/back ---- */
+  .photo-attach { display: flex; align-items: center; gap: 8px; }
+  .photo-attach[hidden] { display: none; }
+  .photo-attach-btn { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; cursor: pointer; border-radius: 9px; overflow: hidden; background: var(--surface-2); border: 1px dashed var(--line); min-height: 36px; }
+  .photo-attach-idle { display: flex; align-items: center; gap: 7px; color: var(--ink-faint); font-size: 12px; padding: 8px 12px; }
+  .photo-attach-thumb { width: 100%; height: 64px; object-fit: cover; display: block; }
+  .photo-attach-thumb:not([hidden]) ~ .photo-attach-idle { display: none; }
+  .photo-attach-x { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
+  .photo-attach-x[hidden] { display: none; }
+  .hero-photo-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-faint); }
   .reaction-hint { background: none; border: none; cursor: pointer; padding: 0; font-size: 11.5px; font-family: 'Work Sans', sans-serif; }
   .reaction-hint.donate { color: var(--accent); font-weight: 700; }
 
@@ -541,6 +556,18 @@
   .hnf-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 0.02em; }
   .hnf-body { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin-bottom: 6px; }
   #houseNotFoundHomeLink { display: inline-block; padding: 12px 20px; text-decoration: none; }
+
+  /* ---- task proof-photo viewer ---- */
+  #taskPhotoModal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  #taskPhotoModal[hidden] { display: none; }
+  #photoModalBackdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); }
+  .photo-modal-card { position: relative; z-index: 1; max-width: 420px; width: 100%; max-height: calc(100% - 20px); overflow-y: auto; padding: 20px 18px; }
+  .photo-modal-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
+  .photo-modal-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 0.03em; margin: 0 30px 14px 0; }
+  .photo-modal-grid { display: flex; flex-direction: column; gap: 14px; }
+  .photo-modal-fig { margin: 0; }
+  .photo-modal-fig img { width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
+  .photo-modal-fig figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
   #subscribeForm { display: flex; flex-direction: column; gap: 8px; }
   #subscribeForm .claim-row .claim-select { flex: 1; min-width: 0; }
   .sub-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
@@ -583,9 +610,25 @@
         <div class="avatar hero-avatar" id="homeDutyAvatar"></div>
         <div class="hero-status" id="claimStatus"></div>
       </div>
+      <div class="photo-attach" id="outPhotoAttach">
+        <label class="photo-attach-btn" id="outPhotoLabel" for="outPhotoInput">
+          <img class="photo-attach-thumb" id="outPhotoThumb" alt="" hidden>
+          <span class="photo-attach-idle" id="outPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="outPhotoPrompt"></span></span>
+        </label>
+        <input type="file" id="outPhotoInput" accept="image/*" capture="environment" hidden>
+        <button class="photo-attach-x" id="outPhotoClear" type="button" hidden>&#10005;</button>
+      </div>
       <div class="claim-row hero-action" id="outRow" hidden>
         <select class="claim-select" id="outNameSelect"></select>
         <button class="stamp-btn hero-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
+      </div>
+      <div class="photo-attach" id="backPhotoAttach">
+        <label class="photo-attach-btn" id="backPhotoLabel" for="backPhotoInput">
+          <img class="photo-attach-thumb" id="backPhotoThumb" alt="" hidden>
+          <span class="photo-attach-idle" id="backPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="backPhotoPrompt"></span></span>
+        </label>
+        <input type="file" id="backPhotoInput" accept="image/*" capture="environment" hidden>
+        <button class="photo-attach-x" id="backPhotoClear" type="button" hidden>&#10005;</button>
       </div>
       <div class="claim-row hero-action" id="backRow" hidden>
         <select class="claim-select" id="backNameSelect"></select>
@@ -898,6 +941,15 @@
     <div class="hnf-title" data-i18n="houseNotFoundTitle"></div>
     <div class="hnf-body" data-i18n="houseNotFoundBody"></div>
     <a class="stamp-btn" id="houseNotFoundHomeLink" data-i18n="houseNotFoundHomeLink"></a>
+  </div>
+</div>
+
+<div id="taskPhotoModal" hidden>
+  <div id="photoModalBackdrop"></div>
+  <div class="photo-modal-card poster">
+    <button class="photo-modal-close" id="photoModalClose" type="button" aria-label="Close">&#10005;</button>
+    <div class="photo-modal-title" id="photoModalTitle"></div>
+    <div class="photo-modal-grid" id="photoModalGrid"></div>
   </div>
 </div>
 

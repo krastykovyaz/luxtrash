@@ -175,6 +175,7 @@
 
   function pad(n) { return String(n).padStart(2, "0"); }
   function monthKey(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1); }
+  function dateKeyOf(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function codesFor(d) {
     var map = SCHEDULE[monthKey(d)];
     if (!map) return null;
@@ -892,6 +893,22 @@
   var MONTHS = [
     { y: 2026, m: 8 }, { y: 2026, m: 9 }, { y: 2026, m: 10 }, { y: 2026, m: 11 }
   ];
+  // date_key -> {codes, out_by, out_at, back_by, back_at, hasOutPhoto,
+  // hasBackPhoto} for every task ever started, so the full calendar can
+  // show who actually marked a collection out/back — not just whose
+  // rotation turn it theoretically was — and whether proof photos exist.
+  var TASK_HISTORY = {};
+  function loadTaskHistory() {
+    fetch(api("/api/tasks/history"))
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (rows) {
+        TASK_HISTORY = {};
+        rows.forEach(function (r) { TASK_HISTORY[r.date_key] = r; });
+        renderCalendar();
+      })
+      .catch(function () {});
+  }
+
   function renderCalendar() {
     var container = document.getElementById("calendarMonths");
     container.innerHTML = "";
@@ -932,8 +949,10 @@
             var thisDate = new Date(mo.y, mo.m, dayNum);
             var codes2 = codesFor(thisDate);
             var isToday = thisDate.toDateString() === today.toDateString();
+            var hist = TASK_HISTORY[dateKeyOf(thisDate)];
+            var hasPhotos = !!(hist && (hist.hasOutPhoto || hist.hasBackPhoto));
             var cellDiv = document.createElement("div");
-            cellDiv.className = "cal-cell" + (codes2 && codes2 !== "HOLIDAY" ? " has-data" : "") + (codes2 === "HOLIDAY" ? " holiday" : "");
+            cellDiv.className = "cal-cell" + (codes2 && codes2 !== "HOLIDAY" ? " has-data" : "") + (codes2 === "HOLIDAY" ? " holiday" : "") + (hasPhotos ? " has-photos" : "");
             if (isToday) cellDiv.style.outline = "1.5px solid var(--accent)";
             var dotsMarkup = "";
             if (codes2 && codes2 !== "HOLIDAY") {
@@ -941,9 +960,26 @@
                 return BIN_COLOR[cc] ? '<span class="dot" style="background:' + BIN_COLOR[cc] + '"></span>' : "";
               }).join("");
             }
+            // Who actually marked it out — not just whose rotation turn it
+            // theoretically was — shown right on the day, plus a camera
+            // glyph when a proof photo exists for it.
+            var whoMarkup = hist && hist.out_by
+              ? '<span class="cal-who">' + initials(hist.out_by) + '</span>' + (hasPhotos ? '<span class="cal-cam">\u{1F4F7}</span>' : "")
+              : "";
             cellDiv.innerHTML =
               '<span class="n mono">' + dayNum + '</span>' +
-              (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>');
+              (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>') +
+              whoMarkup;
+            if (hasPhotos) {
+              cellDiv.setAttribute("role", "button");
+              cellDiv.setAttribute("tabindex", "0");
+              (function (dateKey, histRow) {
+                cellDiv.addEventListener("click", function () { openTaskPhotoModal(dateKey, histRow); });
+                cellDiv.addEventListener("keydown", function (ev) {
+                  if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openTaskPhotoModal(dateKey, histRow); }
+                });
+              })(dateKeyOf(thisDate), hist);
+            }
             td.appendChild(cellDiv);
             dayNum++;
           }
@@ -957,6 +993,42 @@
     });
   }
 
+  // ---- proof-photo viewer for a past calendar day ----
+  var photoModalEl = document.getElementById("taskPhotoModal");
+  var photoModalTitle = document.getElementById("photoModalTitle");
+  var photoModalGrid = document.getElementById("photoModalGrid");
+  function openTaskPhotoModal(dateKey, hist) {
+    photoModalTitle.textContent = fmtLong(new Date(dateKey + "T00:00:00"));
+    photoModalGrid.innerHTML = "";
+    [
+      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, captionKey: "photoModalOutCaption" },
+      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, captionKey: "photoModalBackCaption" }
+    ].forEach(function (entry) {
+      if (!entry.has) return;
+      var fig = document.createElement("figure");
+      fig.className = "photo-modal-fig";
+      var img = document.createElement("img");
+      img.src = api("/api/tasks/" + dateKey + "/photo/" + entry.which);
+      img.alt = tr(entry.captionKey);
+      img.loading = "lazy";
+      fig.appendChild(img);
+      var cap = document.createElement("figcaption");
+      cap.textContent = tr(entry.captionKey) + (entry.who ? " — " + entry.who : "");
+      fig.appendChild(cap);
+      photoModalGrid.appendChild(fig);
+    });
+    photoModalEl.hidden = false;
+  }
+  function closeTaskPhotoModal() {
+    photoModalEl.hidden = true;
+    photoModalGrid.innerHTML = "";
+  }
+  document.getElementById("photoModalClose").addEventListener("click", closeTaskPhotoModal);
+  document.getElementById("photoModalBackdrop").addEventListener("click", closeTaskPhotoModal);
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !photoModalEl.hidden) closeTaskPhotoModal();
+  });
+
   // ---- bin duty task: two-step out/back confirmation + leaderboard ----
   var taskDateLabel = document.getElementById("taskDateLabel");
   var taskBadges = document.getElementById("taskBadges");
@@ -969,6 +1041,46 @@
   var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
   var currentTask = null;
+  var lastRenderedTaskKey = null;
+
+  // ---- optional proof photo on out/back: a small attach control that
+  // previews the chosen image locally (an object URL — nothing is
+  // uploaded until the Mark-out/Confirm-back button is pressed) and
+  // resets itself whenever the underlying task changes. ----
+  function makePhotoAttach(prefix) {
+    var attachEl = document.getElementById(prefix + "PhotoAttach");
+    var input = document.getElementById(prefix + "PhotoInput");
+    var thumb = document.getElementById(prefix + "PhotoThumb");
+    var clearBtn = document.getElementById(prefix + "PhotoClear");
+    var file = null;
+
+    function reset() {
+      file = null;
+      input.value = "";
+      if (thumb.src) URL.revokeObjectURL(thumb.src);
+      thumb.removeAttribute("src");
+      thumb.hidden = true;
+      clearBtn.hidden = true;
+    }
+    input.addEventListener("change", function () {
+      var f = input.files && input.files[0];
+      if (!f) return;
+      file = f;
+      if (thumb.src) URL.revokeObjectURL(thumb.src);
+      thumb.src = URL.createObjectURL(f);
+      thumb.hidden = false;
+      clearBtn.hidden = false;
+    });
+    clearBtn.addEventListener("click", function (ev) { ev.preventDefault(); reset(); });
+
+    return {
+      getFile: function () { return file; },
+      reset: reset,
+      setHidden: function (h) { attachEl.hidden = h; }
+    };
+  }
+  var outPhoto = makePhotoAttach("out");
+  var backPhoto = makePhotoAttach("back");
 
   function fillNameSelect(select, preferredName) {
     var current = select.value;
@@ -990,6 +1102,16 @@
 
   function renderTask(task) {
     currentTask = task;
+    // A picked-but-not-yet-submitted photo belongs to one specific task; if
+    // the underlying task changed (a new day opened, or the current one
+    // finished and something else took its place) any pending photo is
+    // stale and gets dropped rather than silently attached to the wrong day.
+    var taskKey = task ? task.date_key : null;
+    if (taskKey !== lastRenderedTaskKey) {
+      outPhoto.reset();
+      backPhoto.reset();
+      lastRenderedTaskKey = taskKey;
+    }
     var homeDutyAvatar = document.getElementById("homeDutyAvatar");
     var homeHero = document.getElementById("homeHero");
     var reactionsRowEl = document.getElementById("reactionsRow");
@@ -1005,11 +1127,13 @@
         if (cc && cc !== "HOLIDAY") { next = cand; nextOffset = i; break; }
       }
       backRow.hidden = true;
+      backPhoto.setHidden(true);
       reactionsRowEl.hidden = true;
       if (!next) {
         taskDateLabel.textContent = "";
         taskBadges.innerHTML = "";
         outRow.hidden = true;
+        outPhoto.setHidden(true);
         claimStatus.textContent = tr("taskNothing");
         homeDutyAvatar.hidden = true;
         homeHero.classList.add("no-task");
@@ -1030,6 +1154,8 @@
       claimStatus.appendChild(document.createTextNode(upParts[1] || ""));
       var opens = new Date(next.getFullYear(), next.getMonth(), next.getDate() - 1);
       outRow.hidden = false;
+      // Not open yet, so no photo attach either — nothing to confirm.
+      outPhoto.setHidden(true);
       outNameSelect.hidden = true;
       outBtn.disabled = true;
       outBtn.textContent = fmt("opensLater", { date: fmtShort(opens) + " " + opens.getDate() });
@@ -1062,7 +1188,9 @@
 
     if (!task.out_at) {
       outRow.hidden = false;
+      outPhoto.setHidden(false);
       backRow.hidden = true;
+      backPhoto.setHidden(true);
       claimStatus.innerHTML = "";
       var parts = fmt("dutyTonight", { name: dutyPerson }).split(dutyPerson);
       claimStatus.appendChild(document.createTextNode(parts[0]));
@@ -1084,7 +1212,9 @@
       }
     } else {
       outRow.hidden = true;
+      outPhoto.setHidden(true);
       backRow.hidden = false;
+      backPhoto.setHidden(false);
       if (!meOnRoster) fillNameSelect(backNameSelect, task.out_by);
       claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
     }
@@ -1178,16 +1308,25 @@
     if (!currentTask) return;
     outBtn.disabled = true;
     claimStatus.textContent = tr("outLogging");
-    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: outNameSelect.value })
-    })
+    var form = new FormData();
+    form.append("name", outNameSelect.value);
+    var outFile = outPhoto.getFile();
+    if (outFile) form.append("photo", outFile);
+    // No content-type header — fetch sets the multipart boundary itself
+    // from the FormData body; setting it manually breaks the upload.
+    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
-      .then(renderTask)
+      .then(function (task) {
+        // Consumed — the date_key doesn't change here (still the same
+        // task, now marked out), so renderTask's own key-change reset
+        // wouldn't catch this; clear it explicitly.
+        outPhoto.reset();
+        renderTask(task);
+        loadTaskHistory();
+      })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
       .finally(function () { outBtn.disabled = false; });
   });
@@ -1196,19 +1335,21 @@
     if (!currentTask) return;
     backBtn.disabled = true;
     claimStatus.textContent = tr("backLogging");
-    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: backNameSelect.value })
-    })
+    var form = new FormData();
+    form.append("name", backNameSelect.value);
+    var backFile = backPhoto.getFile();
+    if (backFile) form.append("photo", backFile);
+    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
       .then(function (task) {
+        backPhoto.reset();
         celebrate(task.out_by, task.coins);
         celebrateAchievements(task.unlocked);
         loadLeaderboard();
+        loadTaskHistory();
         return loadTask();
       })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
@@ -1218,6 +1359,7 @@
   claimStatus.textContent = tr("taskLoading");
   loadTask();
   loadLeaderboard();
+  loadTaskHistory();
 
   // ---- email notification subscriptions ----
   var subscribePickNote = document.getElementById("subscribePickNote");
