@@ -358,15 +358,22 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
     const name = req.body && req.body.name;
     try {
       const row = confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
+      let unlocked = [];
+      let photoBonus = 0;
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "out", req.file.buffer, req.file.mimetype);
         req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ? WHERE date_key = ?")
           .run(filename, req.file.mimetype, req.params.dateKey);
         row.out_photo = filename;
         row.out_photo_mime = req.file.mimetype;
+        // Proof photos earn Scrap coins too, same tier as a scan — always
+        // credited to whoever marked the bin out (row.out_by, just set by
+        // confirmOut above), the same person every other task reward goes to.
+        photoBonus = 5;
+        unlocked = coins.afterPhoto(req.house.db, row.out_by, "out");
       }
       cleanupOldPhotos(req.house, row.codes, req.params.dateKey);
-      res.json(row);
+      res.json({ ...row, unlocked, photoBonus });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message });
     }
@@ -382,19 +389,25 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
     const name = req.body && req.body.name;
     try {
       const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
+      let photoBonus = 0;
+      let photoUnlocked = [];
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "back", req.file.buffer, req.file.mimetype);
         req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ? WHERE date_key = ?")
           .run(filename, req.file.mimetype, req.params.dateKey);
         row.back_photo = filename;
         row.back_photo_mime = req.file.mimetype;
+        // Same +5 bonus as the out photo — still credited to whoever
+        // marked the bin OUT, even though this photo comes in at the back
+        // step and may be confirmed by someone else entirely.
+        if (row.out_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.out_by, "back"); }
       }
       // Coins go to whoever took the bin OUT (matches how the leaderboard has
       // always credited a task — see coin_ledger's backfill in db.js), not
       // necessarily whoever confirmed it back, since those can be different
       // people.
       const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
-      res.json({ ...row, unlocked });
+      res.json({ ...row, unlocked: [...unlocked, ...photoUnlocked], photoBonus });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message });
     }

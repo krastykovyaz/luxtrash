@@ -130,7 +130,7 @@ window.T = {
     confirmOutBtn: "Mark bins out", confirmBackBtn: "Confirm bins back",
     outPending: "Not out yet.", outConfirmedBy: "{name} took it out — confirm when it's back.",
     outLogging: "Logging…", backLogging: "Logging…",
-    outPhotoPrompt: "Add a photo (optional)", backPhotoPrompt: "Add a photo (optional)",
+    outPhotoPrompt: "Add a photo (+5 Scrap coins)", backPhotoPrompt: "Add a photo (+5 Scrap coins)",
     photoRemove: "Remove photo", photoAttached: "Photo attached",
     calWhoPrefix: "Marked out by",
     photoModalOutCaption: "Bin out", photoModalBackCaption: "Bin back",

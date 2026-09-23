@@ -899,7 +899,10 @@
   // rotation turn it theoretically was — and whether proof photos exist.
   var TASK_HISTORY = {};
   function loadTaskHistory() {
-    fetch(api("/api/tasks/history"))
+    // Returns the promise — callers that render the "next collection"
+    // fallback (which reads TASK_HISTORY) sequence themselves after this,
+    // so that check never runs against stale/empty history.
+    return fetch(api("/api/tasks/history"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         TASK_HISTORY = {};
@@ -1124,7 +1127,15 @@
       for (var i = 1; i <= 60; i++) {
         var cand = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
         var cc = codesFor(cand);
-        if (cc && cc !== "HOLIDAY") { next = cand; nextOffset = i; break; }
+        if (!cc || cc === "HOLIDAY") continue;
+        // A date can have real collection codes and still not be "next" —
+        // its task may already be fully done (confirmed out AND back), most
+        // commonly tonight's own task, finished before the actual pickup
+        // day even arrives. TASK_HISTORY is kept fresh for exactly this
+        // check (see loadTaskHistory, sequenced before this ever renders).
+        var candHist = TASK_HISTORY[dateKeyOf(cand)];
+        if (candHist && candHist.back_at) continue;
+        next = cand; nextOffset = i; break;
       }
       backRow.hidden = true;
       backPhoto.setHidden(true);
@@ -1325,6 +1336,9 @@
         // wouldn't catch this; clear it explicitly.
         outPhoto.reset();
         renderTask(task);
+        if (task.photoBonus) celebrate(task.out_by, task.photoBonus);
+        celebrateAchievements(task.unlocked);
+        if (task.photoBonus) loadLeaderboard();
         loadTaskHistory();
       })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
@@ -1346,20 +1360,22 @@
       })
       .then(function (task) {
         backPhoto.reset();
-        celebrate(task.out_by, task.coins);
+        celebrate(task.out_by, task.coins + (task.photoBonus || 0));
         celebrateAchievements(task.unlocked);
         loadLeaderboard();
-        loadTaskHistory();
-        return loadTask();
+        // History has to be fresh before loadTask re-renders — the "no
+        // task open, show next" fallback reads TASK_HISTORY to skip a day
+        // that's already done (most often tonight's own task, just
+        // finished), so it can't run against a stale/empty history.
+        return loadTaskHistory().then(loadTask);
       })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
       .finally(function () { backBtn.disabled = false; });
   });
 
   claimStatus.textContent = tr("taskLoading");
-  loadTask();
+  loadTaskHistory().then(loadTask); // history first — see the note in backBtn's handler
   loadLeaderboard();
-  loadTaskHistory();
 
   // ---- email notification subscriptions ----
   var subscribePickNote = document.getElementById("subscribePickNote");
