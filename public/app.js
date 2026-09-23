@@ -1225,6 +1225,15 @@
   }
   var outPhoto = makePhotoAttach("out");
   var backPhoto = makePhotoAttach("back");
+  // A picked photo only lives in memory until Mark-out/Confirm-back is
+  // actually pressed — nothing is uploaded before that. Warn before an
+  // accidental reload or tab close throws it away unsubmitted.
+  window.addEventListener("beforeunload", function (ev) {
+    if (outPhoto.getFile() || backPhoto.getFile()) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  });
 
   function fillNameSelect(select, preferredName) {
     var current = select.value;
