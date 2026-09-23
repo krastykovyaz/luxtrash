@@ -321,6 +321,14 @@ function savePhoto(house, dateKey, which, buffer, mime) {
   return filename;
 }
 
+// The client sends the photo's own EXIF/file creation time (ISO string) when
+// it can read one — trust only a real, parseable date, never raw user input.
+function parsePhotoTakenAt(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
 function deletePhotoFile(house, filename) {
   if (!filename) return;
   const file = path.join(taskPhotoDir(house.slug), filename);
@@ -341,7 +349,7 @@ function cleanupOldPhotos(house, codes, beforeDateKey) {
     deletePhotoFile(house, r.back_photo);
   });
   house.db.prepare(
-    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, back_photo = NULL, back_photo_mime = NULL WHERE codes = ? AND date_key < ?"
+    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, out_photo_taken_at = NULL, back_photo = NULL, back_photo_mime = NULL, back_photo_taken_at = NULL WHERE codes = ? AND date_key < ?"
   ).run(codes, beforeDateKey);
 }
 
@@ -362,10 +370,12 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
       let photoBonus = 0;
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "out", req.file.buffer, req.file.mimetype);
-        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ? WHERE date_key = ?")
-          .run(filename, req.file.mimetype, req.params.dateKey);
+        const takenAt = parsePhotoTakenAt(req.body && req.body.photoTakenAt);
+        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ?, out_photo_taken_at = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, takenAt, req.params.dateKey);
         row.out_photo = filename;
         row.out_photo_mime = req.file.mimetype;
+        row.out_photo_taken_at = takenAt;
         // Proof photos earn Scrap coins too, same tier as a scan — always
         // credited to whoever marked the bin out (row.out_by, just set by
         // confirmOut above), the same person every other task reward goes to.
@@ -393,10 +403,12 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
       let photoUnlocked = [];
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "back", req.file.buffer, req.file.mimetype);
-        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ? WHERE date_key = ?")
-          .run(filename, req.file.mimetype, req.params.dateKey);
+        const takenAt = parsePhotoTakenAt(req.body && req.body.photoTakenAt);
+        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ?, back_photo_taken_at = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, takenAt, req.params.dateKey);
         row.back_photo = filename;
         row.back_photo_mime = req.file.mimetype;
+        row.back_photo_taken_at = takenAt;
         // Same +5 bonus as the out photo — still credited to whoever
         // marked the bin OUT, even though this photo comes in at the back
         // step and may be confirmed by someone else entirely.
@@ -441,7 +453,8 @@ app.get("/api/tasks/leaderboard", (req, res) => {
 app.get("/api/tasks/history", (req, res) => {
   const rows = req.house.db.prepare(
     `SELECT date_key, codes, out_by, out_at, back_by, back_at,
-            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto
+            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto,
+            out_photo_taken_at, back_photo_taken_at
      FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
   ).all();
   res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));

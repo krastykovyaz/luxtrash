@@ -1145,8 +1145,8 @@
     photoModalTitle.textContent = fmtLong(new Date(dateKey + "T00:00:00"));
     photoModalGrid.innerHTML = "";
     [
-      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, captionKey: "photoModalOutCaption" },
-      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, captionKey: "photoModalBackCaption" }
+      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, takenAt: hist.out_photo_taken_at, captionKey: "photoModalOutCaption" },
+      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, takenAt: hist.back_photo_taken_at, captionKey: "photoModalBackCaption" }
     ].forEach(function (entry) {
       if (!entry.has) return;
       var fig = document.createElement("figure");
@@ -1159,6 +1159,16 @@
       var cap = document.createElement("figcaption");
       cap.textContent = tr(entry.captionKey) + (entry.who ? " — " + entry.who : "");
       fig.appendChild(cap);
+      if (entry.takenAt) {
+        var takenDate = new Date(entry.takenAt);
+        if (!isNaN(takenDate)) {
+          var stampLine = document.createElement("div");
+          stampLine.className = "photo-modal-stamp";
+          stampLine.textContent = tr("photoTakenLabel") + " " + fmtLong(takenDate) + ", " +
+            String(takenDate.getHours()).padStart(2, "0") + ":" + String(takenDate.getMinutes()).padStart(2, "0");
+          fig.appendChild(stampLine);
+        }
+      }
       photoModalGrid.appendChild(fig);
     });
     photoModalEl.hidden = false;
@@ -1191,34 +1201,126 @@
   // previews the chosen image locally (an object URL — nothing is
   // uploaded until the Mark-out/Confirm-back button is pressed) and
   // resets itself whenever the underlying task changes. ----
+  // ---- reading a photo's real creation time from its own EXIF data,
+  // client-side — so "when was this actually taken" isn't just taken on
+  // faith, whether the photo comes from the camera or the library. Only
+  // JPEGs carry EXIF; anything else (PNG, HEIC re-encoded by the browser,
+  // etc.) falls back to the file's own lastModified, clearly labeled as
+  // such since that's a weaker signal (it's when the FILE was last
+  // touched, not necessarily when the photo was taken). Hand-rolled
+  // rather than a library: this only ever needs one tag out of a JPEG's
+  // first ~64KB, not a general-purpose EXIF reader. ----
+  function readExifDate(file) {
+    return new Promise(function (resolve) {
+      if (!file || !/^image\/jpe?g$/i.test(file.type)) { resolve(null); return; }
+      var reader = new FileReader();
+      reader.onerror = function () { resolve(null); };
+      reader.onload = function () {
+        try { resolve(parseExifDate(new DataView(reader.result))); }
+        catch (e) { resolve(null); }
+      };
+      reader.readAsArrayBuffer(file.slice(0, 131072)); // EXIF always sits near the start
+    });
+  }
+  function parseExifDate(view) {
+    if (view.byteLength < 4 || view.getUint16(0) !== 0xFFD8) return null; // not a JPEG
+    var offset = 2;
+    while (offset + 4 <= view.byteLength) {
+      var marker = view.getUint16(offset);
+      if ((marker & 0xFF00) !== 0xFF00) break; // not a real marker — give up
+      var segLen = view.getUint16(offset + 2);
+      if (marker === 0xFFE1 && offset + 4 + 6 <= view.byteLength && view.getUint32(offset + 4) === 0x45786966) {
+        var tiffStart = offset + 4 + 6; // past marker, length, "Exif\0\0"
+        return readExifTiff(view, tiffStart);
+      }
+      offset += 2 + segLen;
+    }
+    return null;
+  }
+  function readExifTiff(view, tiffStart) {
+    var little = view.getUint16(tiffStart) === 0x4949;
+    var ifd0 = tiffStart + view.getUint32(tiffStart + 4, little);
+    var dateStr = null, subIfdOffset = null;
+    var entries = view.getUint16(ifd0, little);
+    for (var i = 0; i < entries; i++) {
+      var e = ifd0 + 2 + i * 12;
+      var tag = view.getUint16(e, little);
+      if (tag === 0x8769) subIfdOffset = tiffStart + view.getUint32(e + 8, little); // Exif SubIFD pointer
+      else if (tag === 0x0132) dateStr = readExifAscii(view, tiffStart, e, little); // plain DateTime, fallback
+    }
+    if (subIfdOffset != null) {
+      var subEntries = view.getUint16(subIfdOffset, little);
+      for (var j = 0; j < subEntries; j++) {
+        var se = subIfdOffset + 2 + j * 12;
+        if (view.getUint16(se, little) === 0x9003) { // DateTimeOriginal — the one that matters
+          dateStr = readExifAscii(view, tiffStart, se, little);
+          break;
+        }
+      }
+    }
+    if (!dateStr) return null;
+    var m = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(dateStr);
+    if (!m) return null;
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  }
+  function readExifAscii(view, tiffStart, entryOffset, little) {
+    var count = view.getUint32(entryOffset + 4, little);
+    var valueOffset = entryOffset + 8;
+    var dataStart = count <= 4 ? valueOffset : tiffStart + view.getUint32(valueOffset, little);
+    var chars = [];
+    for (var k = 0; k < count - 1 && dataStart + k < view.byteLength; k++) chars.push(String.fromCharCode(view.getUint8(dataStart + k)));
+    return chars.join("");
+  }
+
   function makePhotoAttach(prefix) {
     var attachEl = document.getElementById(prefix + "PhotoAttach");
     var input = document.getElementById(prefix + "PhotoInput");
     var thumb = document.getElementById(prefix + "PhotoThumb");
     var clearBtn = document.getElementById(prefix + "PhotoClear");
+    var metaEl = document.getElementById(prefix + "PhotoMeta");
     var file = null;
+    var takenAt = null; // Date, or null when unknown
 
     function reset() {
       file = null;
+      takenAt = null;
       input.value = "";
       if (thumb.src) URL.revokeObjectURL(thumb.src);
       thumb.removeAttribute("src");
       thumb.hidden = true;
       clearBtn.hidden = true;
+      metaEl.hidden = true;
+      metaEl.classList.remove("warn");
+    }
+    function renderMeta(date, fromExif) {
+      if (!date) { metaEl.hidden = true; return; }
+      var sameDay = date.toDateString() === new Date().toDateString();
+      var stamp = fmtLong(date) + ", " + String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0");
+      metaEl.textContent = (fromExif ? tr("photoTakenLabel") : tr("photoFileDateLabel")) + " " + stamp + (sameDay ? "" : " " + tr("photoNotTodayNote"));
+      metaEl.classList.toggle("warn", !sameDay);
+      metaEl.hidden = false;
     }
     input.addEventListener("change", function () {
       var f = input.files && input.files[0];
       if (!f) return;
       file = f;
+      takenAt = null;
       if (thumb.src) URL.revokeObjectURL(thumb.src);
       thumb.src = URL.createObjectURL(f);
       thumb.hidden = false;
       clearBtn.hidden = false;
+      metaEl.hidden = true;
+      readExifDate(f).then(function (exifDate) {
+        if (file !== f) return; // a different file was picked while this was reading
+        takenAt = exifDate || (f.lastModified ? new Date(f.lastModified) : null);
+        renderMeta(takenAt, !!exifDate);
+      });
     });
     clearBtn.addEventListener("click", function (ev) { ev.preventDefault(); reset(); });
 
     return {
       getFile: function () { return file; },
+      getTakenAt: function () { return takenAt; },
       reset: reset,
       setHidden: function (h) { attachEl.hidden = h; }
     };
@@ -1473,7 +1575,11 @@
     var form = new FormData();
     form.append("name", outNameSelect.value);
     var outFile = outPhoto.getFile();
-    if (outFile) form.append("photo", outFile);
+    if (outFile) {
+      form.append("photo", outFile);
+      var outTaken = outPhoto.getTakenAt();
+      if (outTaken) form.append("photoTakenAt", outTaken.toISOString());
+    }
     // No content-type header — fetch sets the multipart boundary itself
     // from the FormData body; setting it manually breaks the upload.
     fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
@@ -1503,7 +1609,11 @@
     var form = new FormData();
     form.append("name", backNameSelect.value);
     var backFile = backPhoto.getFile();
-    if (backFile) form.append("photo", backFile);
+    if (backFile) {
+      form.append("photo", backFile);
+      var backTaken = backPhoto.getTakenAt();
+      if (backTaken) form.append("photoTakenAt", backTaken.toISOString());
+    }
     fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });

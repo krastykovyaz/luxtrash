@@ -387,14 +387,18 @@
   .hero-card .reactions-row { padding-top: 14px; border-top: 1px dashed var(--line); }
 
   /* ---- optional proof photo on out/back ---- */
-  .photo-attach { display: flex; align-items: center; gap: 8px; }
+  .photo-attach { display: flex; flex-direction: column; gap: 5px; }
   .photo-attach[hidden] { display: none; }
+  .photo-attach-row { display: flex; align-items: center; gap: 8px; }
   .photo-attach-btn { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; cursor: pointer; border-radius: 9px; overflow: hidden; background: var(--surface-2); border: 1px dashed var(--line); min-height: 36px; }
   .photo-attach-idle { display: flex; align-items: center; gap: 7px; color: var(--ink-faint); font-size: 12px; padding: 8px 12px; }
   .photo-attach-thumb { width: 100%; height: 64px; object-fit: cover; display: block; }
   .photo-attach-thumb:not([hidden]) ~ .photo-attach-idle { display: none; }
   .photo-attach-x { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
   .photo-attach-x[hidden] { display: none; }
+  .photo-attach-meta { font-size: 11px; color: var(--ink-faint); padding: 0 2px; }
+  .photo-attach-meta[hidden] { display: none; }
+  .photo-attach-meta.warn { color: var(--wrong); }
   .hero-photo-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-faint); }
   .reaction-hint { background: none; border: none; cursor: pointer; padding: 0; font-size: 11.5px; font-family: 'Work Sans', sans-serif; }
   .reaction-hint.donate { color: var(--accent); font-weight: 700; }
@@ -601,6 +605,7 @@
   .photo-modal-fig { margin: 0; }
   .photo-modal-fig img { width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
   .photo-modal-fig figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+  .photo-modal-stamp { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
   #subscribeForm { display: flex; flex-direction: column; gap: 8px; }
   #subscribeForm .claim-row .claim-select { flex: 1; min-width: 0; }
   .sub-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
@@ -644,24 +649,30 @@
         <div class="hero-status" id="claimStatus"></div>
       </div>
       <div class="photo-attach" id="outPhotoAttach">
-        <label class="photo-attach-btn" id="outPhotoLabel" for="outPhotoInput">
-          <img class="photo-attach-thumb" id="outPhotoThumb" alt="" hidden>
-          <span class="photo-attach-idle" id="outPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="outPhotoPrompt"></span></span>
-        </label>
-        <input type="file" id="outPhotoInput" accept="image/*" capture="environment" hidden>
-        <button class="photo-attach-x" id="outPhotoClear" type="button" hidden>&#10005;</button>
+        <div class="photo-attach-row">
+          <label class="photo-attach-btn" id="outPhotoLabel" for="outPhotoInput">
+            <img class="photo-attach-thumb" id="outPhotoThumb" alt="" hidden>
+            <span class="photo-attach-idle" id="outPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="outPhotoPrompt"></span></span>
+          </label>
+          <input type="file" id="outPhotoInput" accept="image/*" hidden>
+          <button class="photo-attach-x" id="outPhotoClear" type="button" hidden>&#10005;</button>
+        </div>
+        <div class="photo-attach-meta" id="outPhotoMeta" hidden></div>
       </div>
       <div class="claim-row hero-action" id="outRow" hidden>
         <select class="claim-select" id="outNameSelect"></select>
         <button class="stamp-btn hero-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
       </div>
       <div class="photo-attach" id="backPhotoAttach">
-        <label class="photo-attach-btn" id="backPhotoLabel" for="backPhotoInput">
-          <img class="photo-attach-thumb" id="backPhotoThumb" alt="" hidden>
-          <span class="photo-attach-idle" id="backPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="backPhotoPrompt"></span></span>
-        </label>
-        <input type="file" id="backPhotoInput" accept="image/*" capture="environment" hidden>
-        <button class="photo-attach-x" id="backPhotoClear" type="button" hidden>&#10005;</button>
+        <div class="photo-attach-row">
+          <label class="photo-attach-btn" id="backPhotoLabel" for="backPhotoInput">
+            <img class="photo-attach-thumb" id="backPhotoThumb" alt="" hidden>
+            <span class="photo-attach-idle" id="backPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="backPhotoPrompt"></span></span>
+          </label>
+          <input type="file" id="backPhotoInput" accept="image/*" hidden>
+          <button class="photo-attach-x" id="backPhotoClear" type="button" hidden>&#10005;</button>
+        </div>
+        <div class="photo-attach-meta" id="backPhotoMeta" hidden></div>
       </div>
       <div class="claim-row hero-action" id="backRow" hidden>
         <select class="claim-select" id="backNameSelect"></select>

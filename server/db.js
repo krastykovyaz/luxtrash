@@ -45,7 +45,7 @@ function ensureSchema(db, opts) {
   // photos for that same codes value — a photo only has to outlive its own
   // collection cycle, not the whole house's history.
   var taskCols = db.prepare("PRAGMA table_info(tasks)").all().map(function (c) { return c.name; });
-  ["out_photo", "out_photo_mime", "back_photo", "back_photo_mime"].forEach(function (col) {
+  ["out_photo", "out_photo_mime", "back_photo", "back_photo_mime", "out_photo_taken_at", "back_photo_taken_at"].forEach(function (col) {
     if (taskCols.indexOf(col) === -1) {
       db.exec("ALTER TABLE tasks ADD COLUMN " + col + " TEXT");
     }
