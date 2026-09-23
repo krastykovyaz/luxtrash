@@ -601,9 +601,9 @@
   .photo-modal-card { position: relative; z-index: 1; max-width: 420px; width: 100%; max-height: calc(100% - 20px); overflow-y: auto; padding: 20px 18px; }
   .photo-modal-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
   .photo-modal-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 0.03em; margin: 0 30px 14px 0; }
-  .photo-modal-grid { display: flex; flex-direction: column; gap: 14px; }
-  .photo-modal-fig { margin: 0; }
-  .photo-modal-fig img { width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
+  .photo-modal-grid { display: flex; flex-direction: row; gap: 10px; }
+  .photo-modal-fig { margin: 0; flex: 1; min-width: 0; }
+  .photo-modal-fig img { width: 100%; height: 160px; max-height: none; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
   .photo-modal-fig figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
   .photo-modal-stamp { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
   #subscribeForm { display: flex; flex-direction: column; gap: 8px; }
