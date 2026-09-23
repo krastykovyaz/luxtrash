@@ -91,6 +91,17 @@ function afterPerfectRound(db, name) {
   return unlocked;
 }
 
+// A photo attached to the out or back confirmation — same +5 tier as a
+// scan. Always credited to whoever marked the bin OUT (the task's owner
+// for every reward, same rule afterTaskCompleted already follows), even
+// when it's the *back* photo and a different person confirmed that step.
+function afterPhoto(db, name, which) {
+  award(db, name, 5, "photo", which);
+  const unlocked = [];
+  if (maybeUnlockHouseHero(db, name)) unlocked.push("house_hero");
+  return unlocked;
+}
+
 function afterSubscribe(db, name) {
   award(db, name, 10, "subscribe", null);
   const unlocked = [];
@@ -123,6 +134,7 @@ module.exports = {
   afterTaskCompleted,
   afterScan,
   afterPerfectRound,
+  afterPhoto,
   afterSubscribe,
   donate
 };

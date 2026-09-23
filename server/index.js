@@ -5,6 +5,7 @@
 process.env.TZ = process.env.TZ || "Europe/Luxembourg";
 
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 // Always load the .env at the repo root, regardless of the process's cwd —
 // relying on dotenv's cwd-relative default silently picks up the wrong file
@@ -15,20 +16,35 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const cron = require("node-cron");
-const db = require("./db");
+const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
+const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
-const { SCHEDULE } = require("./rotation");
+const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
+
+// The original house's db, resolved once at startup — used unchanged by the
+// background cron jobs at the bottom of this file (see the "Still open"
+// note in the house-building mockup: scheduled digest emails stay scoped
+// to this one house for now; interactive email actions work per-house).
+const defaultDb = getDb(DEFAULT_SLUG);
+
+// The original house now has to be opened the same way as any other one —
+// a real invite link — instead of being what loads with no ?h= at all.
+// This mints (once, ever — stable across restarts) a proper unguessable
+// slug for it and logs it so it's recoverable from the server even if it's
+// lost client-side.
+const originalHouse = houses.ensureOriginalHouse("Bin Duty");
+console.log(`Original house invite link: /?h=${originalHouse.slug}`);
 
 const MAX_NAME_LENGTH = 40;
 const VALID_LANGS = new Set(LANGS.map((l) => l.code));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UNSAFE_NAME_CHARS = /[<>&"'`\x00-\x1F]/;
 
-function currentRoster() {
+function currentRoster(db) {
   // Alphabetical (case-insensitive), not insertion order — so "one
   // house-mate a week, alphabetically" (what the UI actually says) stays
   // true no matter when someone was added to or removed from the roster.
@@ -37,8 +53,20 @@ function currentRoster() {
 
 // Same order, with occupation — a separate route/shape from GET /api/roster
 // so nothing that already expects a plain array of names breaks.
-function currentRosterFull() {
+function currentRosterFull(db) {
   return db.prepare("SELECT name, occupation, created_at FROM roster ORDER BY name COLLATE NOCASE ASC").all();
+}
+
+// A custom house's schedule lives in its own `schedule` table (starts
+// empty — see the "no collection dates yet" state in the app); the
+// original house keeps using the hardcoded, real Luxembourg calendar in
+// rotation.js, exactly as before multi-house existed.
+function flatScheduleFor(house) {
+  if (house.slug === DEFAULT_SLUG) return DEFAULT_FLAT_SCHEDULE;
+  const rows = house.db.prepare("SELECT date_key, codes FROM schedule").all();
+  const flat = {};
+  rows.forEach((r) => { flat[r.date_key] = r.codes; });
+  return flat;
 }
 
 const app = express();
@@ -51,11 +79,96 @@ app.use(express.json());
 const checkLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 const writeLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 const mailLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+const buildLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }
 });
+
+// --- House resolution: every /api request (except building/looking up a
+// house) carries its house as ?h=<slug> — no more implicit default. No
+// slug at all means no house was specified (the client should never send
+// this; it shows a "build or join" landing page instead of ever calling
+// these routes with no house picked). An unknown slug is a 404. ---
+function resolveHouse(req, res, next) {
+  const raw = typeof req.query.h === "string" ? req.query.h.trim().toLowerCase() : "";
+  if (!raw) {
+    return res.status(400).json({ error: "No house specified — use your house's invite link.", code: "NO_HOUSE_SPECIFIED" });
+  }
+  const row = houses.getHouse(raw);
+  if (!row) {
+    return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
+  }
+  // The original house's public slug still opens its original database —
+  // req.house.slug stays the internal DEFAULT_SLUG sentinel so every other
+  // "is this the original house" check in this file keeps working.
+  // publicSlug is always the real, URL-usable slug (row.slug) — needed
+  // anywhere a link back into this house gets built (e.g. the subscribe
+  // confirmation email), since req.house.slug becomes the internal
+  // DEFAULT_SLUG sentinel for the original house.
+  if (row.is_original) {
+    req.house = { slug: DEFAULT_SLUG, publicSlug: row.slug, db: defaultDb, name: row.name, city: row.city, language: row.language };
+  } else {
+    req.house = { slug: row.slug, publicSlug: row.slug, db: getDb(row.slug), name: row.name, city: row.city, language: row.language };
+  }
+  next();
+}
+
+// --- Build / look up a house (unscoped — these resolve which house to use,
+// so they run before resolveHouse would even make sense) ---
+app.post("/api/houses", buildLimiter, (req, res) => {
+  const body = req.body || {};
+  try {
+    const { house, ownerToken } = houses.createHouse({ name: body.name, city: body.city, language: body.language });
+    // ownerToken is the builder's proof of ownership — returned only here,
+    // once; the browser keeps it, and it's what DELETE below checks.
+    res.status(201).json({ slug: house.slug, name: house.name, city: house.city, language: house.language, ownerToken });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Destroy a house — only whoever built it (holds its owner key) can. The
+// original house never has an owner key, so it can never be destroyed here.
+// Irreversible: the registry row and the house's whole database file go.
+app.delete("/api/houses/:slug", buildLimiter, (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  const house = houses.getHouse(slug);
+  if (!house) {
+    return res.status(404).json({ error: "That house doesn't exist.", code: "HOUSE_NOT_FOUND" });
+  }
+  const token = req.body && req.body.ownerToken;
+  if (!houses.isOwner(slug, token)) {
+    return res.status(403).json({ error: "Only the person who built this house can destroy it.", code: "NOT_OWNER" });
+  }
+  try {
+    houses.deleteHouse(slug);
+    destroyHouseDb(slug);
+    console.log(`House destroyed by its builder: ${slug}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Destroying house ${slug} failed: ${err.message}`);
+    res.status(500).json({ error: "Couldn't destroy that house — try again." });
+  }
+});
+
+app.get("/api/houses/:slug", (req, res) => {
+  const house = houses.getHouse(req.params.slug.toLowerCase());
+  if (!house) {
+    return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
+  }
+  const db = house.is_original ? defaultDb : getDb(house.slug);
+  const memberCount = db.prepare("SELECT COUNT(*) AS n FROM roster").get().n;
+  res.json({ slug: house.slug, name: house.name, city: house.city, language: house.language, memberCount });
+});
+
+// Everything below operates on req.house, resolved from ?h=<slug>. Scoped
+// to /api only — mounting this with no path would also run it for the
+// static page/asset requests (GET / , /app.js, ...), where a bad ?h= on
+// the page URL would hijack the whole page load into a raw JSON 404
+// instead of letting index.html load and show its own "not found" state.
+app.use("/api", resolveHouse);
 
 // --- Camera bin-check (Gemini) ---
 // multer.memoryStorage() above means the photo only ever exists as an
@@ -79,8 +192,8 @@ app.post("/api/check", checkLimiter, (req, res) => {
       // nobody's picked who they are.
       const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
       let unlocked = [];
-      if (name && currentRoster().includes(name)) {
-        unlocked = coins.afterScan(db, name);
+      if (name && currentRoster(req.house.db).includes(name)) {
+        unlocked = coins.afterScan(req.house.db, name);
       }
       res.json({ ...result, unlocked });
     } catch (checkErr) {
@@ -121,26 +234,39 @@ app.post("/api/check/email", mailLimiter, async (req, res) => {
   }
 });
 
-// --- Collection schedule (kept server-side only, in rotation.js — this
-// just serves it, so the frontend doesn't carry a second hand-copied
-// version that can silently drift from the one the API actually uses) ---
+// --- Collection schedule — the original house's is the hardcoded, real
+// Luxembourg calendar in rotation.js; a custom house's is whatever's in its
+// own `schedule` table (starts empty). Served as the same nested
+// {"YYYY-MM": {day: code}} shape either way, so the frontend doesn't need
+// to know which kind of house it's looking at. ---
 app.get("/api/schedule", (req, res) => {
-  res.json(SCHEDULE);
+  if (req.house.slug === DEFAULT_SLUG) {
+    return res.json(SCHEDULE);
+  }
+  const rows = req.house.db.prepare("SELECT date_key, codes FROM schedule").all();
+  const nested = {};
+  rows.forEach((r) => {
+    const [y, m, d] = r.date_key.split("-");
+    const monthKey = `${y}-${m}`;
+    if (!nested[monthKey]) nested[monthKey] = {};
+    nested[monthKey][Number(d)] = r.codes;
+  });
+  res.json(nested);
 });
 
 // --- Roster (housemates) ---
 app.get("/api/roster", (req, res) => {
-  res.json(currentRoster());
+  res.json(currentRoster(req.house.db));
 });
 
 app.get("/api/roster/full", (req, res) => {
-  res.json(currentRosterFull());
+  res.json(currentRosterFull(req.house.db));
 });
 
 const MAX_OCCUPATION_LENGTH = 60;
 
 app.patch("/api/roster/:name", writeLimiter, (req, res) => {
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (!roster.includes(req.params.name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
@@ -149,8 +275,8 @@ app.patch("/api/roster/:name", writeLimiter, (req, res) => {
   if (occupation && UNSAFE_NAME_CHARS.test(occupation)) {
     return res.status(400).json({ error: "Occupation can't contain <, >, &, quotes, or control characters." });
   }
-  db.prepare("UPDATE roster SET occupation = ? WHERE name = ?").run(occupation || null, req.params.name);
-  res.json(currentRosterFull());
+  req.house.db.prepare("UPDATE roster SET occupation = ? WHERE name = ?").run(occupation || null, req.params.name);
+  res.json(currentRosterFull(req.house.db));
 });
 
 app.post("/api/roster", writeLimiter, (req, res) => {
@@ -165,71 +291,175 @@ app.post("/api/roster", writeLimiter, (req, res) => {
   if (UNSAFE_NAME_CHARS.test(name)) {
     return res.status(400).json({ error: "Name can't contain <, >, &, quotes, or control characters." });
   }
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (roster.some((n) => n.toLowerCase() === name.toLowerCase())) {
     return res.status(409).json({ error: "That name is already on the roster." });
   }
-  const nextPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
-  db.prepare("INSERT INTO roster (name, position, created_at) VALUES (?, ?, ?)").run(name, nextPos, new Date().toISOString());
-  res.status(201).json(currentRoster());
+  const nextPos = req.house.db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM roster").get().pos;
+  req.house.db.prepare("INSERT INTO roster (name, position, created_at) VALUES (?, ?, ?)").run(name, nextPos, new Date().toISOString());
+  res.status(201).json(currentRoster(req.house.db));
 });
 
 app.delete("/api/roster/:name", writeLimiter, (req, res) => {
   const name = req.params.name;
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (roster.length <= 1) {
     return res.status(400).json({ error: "At least one housemate has to stay on the roster." });
   }
-  db.prepare("DELETE FROM roster WHERE name = ?").run(name);
-  res.json(currentRoster());
+  req.house.db.prepare("DELETE FROM roster WHERE name = ?").run(name);
+  res.json(currentRoster(req.house.db));
 });
 
-// --- Bin duty tasks: two-step out/back confirmation ---
+// --- Bin duty tasks: two-step out/back confirmation, each optionally with
+// a proof photo (bin at the curb / bin back in place) ---
+const PHOTO_MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heic" };
+
+function savePhoto(house, dateKey, which, buffer, mime) {
+  const ext = PHOTO_MIME_EXT[mime] || "jpg";
+  const filename = `${dateKey}-${which}.${ext}`;
+  fs.writeFileSync(path.join(taskPhotoDir(house.slug), filename), buffer);
+  return filename;
+}
+
+function deletePhotoFile(house, filename) {
+  if (!filename) return;
+  const file = path.join(taskPhotoDir(house.slug), filename);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
+// A proof photo only needs to outlive its own collection cycle: once a new
+// task with the SAME codes is confirmed out, every older task sharing those
+// codes has its photos deleted (file + columns) — "stored until the next
+// same-kind collection", not kept forever.
+function cleanupOldPhotos(house, codes, beforeDateKey) {
+  const rows = house.db.prepare(
+    "SELECT date_key, out_photo, back_photo FROM tasks WHERE codes = ? AND date_key < ? AND (out_photo IS NOT NULL OR back_photo IS NOT NULL)"
+  ).all(codes, beforeDateKey);
+  if (!rows.length) return;
+  rows.forEach((r) => {
+    deletePhotoFile(house, r.out_photo);
+    deletePhotoFile(house, r.back_photo);
+  });
+  house.db.prepare(
+    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, back_photo = NULL, back_photo_mime = NULL WHERE codes = ? AND date_key < ?"
+  ).run(codes, beforeDateKey);
+}
+
 app.get("/api/tasks/current", (req, res) => {
-  res.json(getCurrentTask(db, new Date()));
+  res.json(getCurrentTask(req.house.db, new Date(), flatScheduleFor(req.house)));
 });
 
 app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
-  const name = req.body && req.body.name;
-  try {
-    res.json(confirmOut(db, req.params.dateKey, currentRoster(), name));
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
-  }
+  upload.single("photo")(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
+    }
+    const name = req.body && req.body.name;
+    try {
+      const row = confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
+      let unlocked = [];
+      let photoBonus = 0;
+      if (req.file) {
+        const filename = savePhoto(req.house, req.params.dateKey, "out", req.file.buffer, req.file.mimetype);
+        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, req.params.dateKey);
+        row.out_photo = filename;
+        row.out_photo_mime = req.file.mimetype;
+        // Proof photos earn Scrap coins too, same tier as a scan — always
+        // credited to whoever marked the bin out (row.out_by, just set by
+        // confirmOut above), the same person every other task reward goes to.
+        photoBonus = 5;
+        unlocked = coins.afterPhoto(req.house.db, row.out_by, "out");
+      }
+      cleanupOldPhotos(req.house, row.codes, req.params.dateKey);
+      res.json({ ...row, unlocked, photoBonus });
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
 });
 
 app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
-  const name = req.body && req.body.name;
-  try {
-    const row = confirmBack(db, req.params.dateKey, currentRoster(), name);
-    // Coins go to whoever took the bin OUT (matches how the leaderboard has
-    // always credited a task — see coin_ledger's backfill in db.js), not
-    // necessarily whoever confirmed it back, since those can be different
-    // people.
-    const unlocked = row.out_by ? coins.afterTaskCompleted(db, row.out_by) : [];
-    res.json({ ...row, unlocked });
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
-  }
+  upload.single("photo")(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
+    }
+    const name = req.body && req.body.name;
+    try {
+      const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
+      let photoBonus = 0;
+      let photoUnlocked = [];
+      if (req.file) {
+        const filename = savePhoto(req.house, req.params.dateKey, "back", req.file.buffer, req.file.mimetype);
+        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, req.params.dateKey);
+        row.back_photo = filename;
+        row.back_photo_mime = req.file.mimetype;
+        // Same +5 bonus as the out photo — still credited to whoever
+        // marked the bin OUT, even though this photo comes in at the back
+        // step and may be confirmed by someone else entirely.
+        if (row.out_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.out_by, "back"); }
+      }
+      // Coins go to whoever took the bin OUT (matches how the leaderboard has
+      // always credited a task — see coin_ledger's backfill in db.js), not
+      // necessarily whoever confirmed it back, since those can be different
+      // people.
+      const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
+      res.json({ ...row, unlocked: [...unlocked, ...photoUnlocked], photoBonus });
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+});
+
+// Serves a stored proof photo. 404 with no body when there isn't one —
+// the client treats that as "no photo", not an error worth surfacing.
+app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
+  const which = req.params.which;
+  if (which !== "out" && which !== "back") return res.status(400).end();
+  const row = req.house.db.prepare(
+    `SELECT ${which}_photo AS photo, ${which}_photo_mime AS mime FROM tasks WHERE date_key = ?`
+  ).get(req.params.dateKey);
+  if (!row || !row.photo) return res.status(404).end();
+  const file = path.join(taskPhotoDir(req.house.slug), row.photo);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.set("Cache-Control", "private, max-age=86400");
+  res.type(row.mime || "image/jpeg");
+  fs.createReadStream(file).pipe(res);
 });
 
 app.get("/api/tasks/leaderboard", (req, res) => {
-  res.json(coins.getLeaderboard(db));
+  res.json(coins.getLeaderboard(req.house.db));
+});
+
+// Every task that was ever started, most recent first — the full calendar
+// uses this to show who actually confirmed each collection out/back (not
+// just whose rotation turn it theoretically was) and whether photos exist
+// for it. Capped generously; nobody's calendar needs unbounded history.
+app.get("/api/tasks/history", (req, res) => {
+  const rows = req.house.db.prepare(
+    `SELECT date_key, codes, out_by, out_at, back_by, back_at,
+            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto
+     FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
+  ).all();
+  res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));
 });
 
 // --- Scrap coins: balance/history/achievements for one person, donations,
 // and the Sort It quiz's perfect-round bonus ---
 app.get("/api/coins/:name", (req, res) => {
   const name = req.params.name;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
-  const turnsRow = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE out_by = ? AND back_at IS NOT NULL").get(name);
+  const turnsRow = req.house.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE out_by = ? AND back_at IS NOT NULL").get(name);
   res.json({
     name,
-    balance: coins.getBalance(db, name),
-    history: coins.getHistory(db, name, 20),
-    achievements: coins.getAchievements(db, name),
+    balance: coins.getBalance(req.house.db, name),
+    history: coins.getHistory(req.house.db, name, 20),
+    achievements: coins.getAchievements(req.house.db, name),
     turnsTaken: turnsRow.n
   });
 });
@@ -239,7 +469,7 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
   const from = typeof body.from === "string" ? body.from.trim() : "";
   const to = typeof body.to === "string" ? body.to.trim() : "";
   const amount = Number(body.amount);
-  const roster = currentRoster();
+  const roster = currentRoster(req.house.db);
   if (!roster.includes(from) || !roster.includes(to)) {
     return res.status(400).json({ error: "Pick two names that are on the roster." });
   }
@@ -250,8 +480,8 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
     return res.status(400).json({ error: "Amount has to be a whole number between 1 and 1000." });
   }
   try {
-    const unlocked = coins.donate(db, from, to, amount);
-    res.json({ ok: true, balance: coins.getBalance(db, from), unlocked });
+    const unlocked = coins.donate(req.house.db, from, to, amount);
+    res.json({ ok: true, balance: coins.getBalance(req.house.db, from), unlocked });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -267,7 +497,7 @@ app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const correct = Number(body.correct);
   const total = Number(body.total);
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "That name isn't on the roster." });
   }
   if (!Number.isInteger(correct) || !Number.isInteger(total) || total <= 0 || correct > total) {
@@ -276,35 +506,35 @@ app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   if (correct < total) {
     return res.json({ awarded: false, unlocked: [] });
   }
-  const unlocked = coins.afterPerfectRound(db, name);
-  res.json({ awarded: true, unlocked, balance: coins.getBalance(db, name) });
+  const unlocked = coins.afterPerfectRound(req.house.db, name);
+  res.json({ awarded: true, unlocked, balance: coins.getBalance(req.house.db, name) });
 });
 
 // --- Reactions on tonight's task (heart / thumbs up / thumbs down) ---
 const REACTION_EMOJI = new Set(["heart", "up", "down"]);
 
 app.get("/api/reactions/:dateKey", (req, res) => {
-  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const rows = req.house.db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
   const counts = { heart: 0, up: 0, down: 0 };
   rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
-  res.json({ counts, mine: {} , rows });
+  res.json({ counts, mine: {}, rows });
 });
 
 app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
   const body = req.body || {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const emoji = body.emoji;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "That name isn't on the roster." });
   }
   if (!REACTION_EMOJI.has(emoji)) {
     return res.status(400).json({ error: "Unknown reaction." });
   }
-  db.prepare(
+  req.house.db.prepare(
     "INSERT INTO reactions (date_key, name, emoji, created_at) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT(date_key, name) DO UPDATE SET emoji = excluded.emoji, created_at = excluded.created_at"
   ).run(req.params.dateKey, name, emoji, new Date().toISOString());
-  const rows = db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
+  const rows = req.house.db.prepare("SELECT name, emoji FROM reactions WHERE date_key = ?").all(req.params.dateKey);
   const counts = { heart: 0, up: 0, down: 0 };
   rows.forEach((r) => { if (counts[r.emoji] !== undefined) counts[r.emoji]++; });
   res.json({ counts, rows });
@@ -314,7 +544,7 @@ app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
 // Only ever lists/emails CONFIRMED accounts — an unconfirmed row is just a
 // pending request nobody else can see or be notified from.
 app.get("/api/subscribe", (req, res) => {
-  const rows = db.prepare("SELECT name, language FROM accounts WHERE confirmed = 1 ORDER BY created_at ASC").all();
+  const rows = req.house.db.prepare("SELECT name, language FROM accounts WHERE confirmed = 1 ORDER BY created_at ASC").all();
   res.json(rows);
 });
 
@@ -324,7 +554,7 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const language = VALID_LANGS.has(body.language) ? body.language : "en";
 
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
   }
   if (!EMAIL_RE.test(email)) {
@@ -332,14 +562,17 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   }
 
   const token = crypto.randomBytes(24).toString("hex");
-  db.prepare(
+  req.house.db.prepare(
     "INSERT INTO accounts (email, name, language, created_at, confirmed, confirm_token) VALUES (?, ?, ?, ?, 0, ?) " +
     "ON CONFLICT(email) DO UPDATE SET name = excluded.name, language = excluded.language, confirmed = 0, confirm_token = excluded.confirm_token"
   ).run(email, name, language, new Date().toISOString(), token);
 
-  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}`;
+  // Always carries ?h= now — there's no implicit default house left for a
+  // bare confirm link to fall back to.
+  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}` +
+    `?h=${encodeURIComponent(req.house.publicSlug)}`;
   try {
-    await sendConfirmationEmail(email, language, name, confirmUrl);
+    await sendConfirmationEmail(email, language, name, confirmUrl, req.house.publicSlug);
     res.status(202).json({ pending: true });
   } catch (err) {
     const status = err.code === "NO_SMTP" ? 503 : 502;
@@ -348,18 +581,18 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
 });
 
 app.get("/api/subscribe/confirm/:token", (req, res) => {
-  const row = db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
+  const row = req.house.db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
   if (!row) {
     return res.status(404).send("<p>That confirmation link is invalid or already used. Close this tab and subscribe again from Bin Duty.</p>");
   }
-  db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
+  req.house.db.prepare("UPDATE accounts SET confirmed = 1, confirm_token = NULL WHERE email = ?").run(row.email);
   // One-time signup bonus — guarded so re-subscribing under a new email
   // later doesn't pay out twice for the same person.
   let bonusLine = "";
-  if (currentRoster().includes(row.name)) {
-    const already = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(row.name);
+  if (currentRoster(req.house.db).includes(row.name)) {
+    const already = req.house.db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(row.name);
     if (!already) {
-      coins.afterSubscribe(db, row.name);
+      coins.afterSubscribe(req.house.db, row.name);
       bonusLine = " You've also earned +10 Scrap coins for subscribing.";
     }
   }
@@ -377,13 +610,13 @@ function maskEmail(email) {
 
 app.get("/api/subscribe/status/:name", (req, res) => {
   const name = req.params.name;
-  if (!currentRoster().includes(name)) {
+  if (!currentRoster(req.house.db).includes(name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
-  const row = db.prepare(
+  const row = req.house.db.prepare(
     "SELECT email, language FROM accounts WHERE name = ? AND confirmed = 1 ORDER BY created_at DESC LIMIT 1"
   ).get(name);
-  const bonus = db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(name);
+  const bonus = req.house.db.prepare("SELECT 1 FROM coin_ledger WHERE name = ? AND reason = 'subscribe' LIMIT 1").get(name);
   res.json({
     subscribed: !!row,
     email: row ? maskEmail(row.email) : null,
@@ -393,12 +626,12 @@ app.get("/api/subscribe/status/:name", (req, res) => {
 });
 
 app.delete("/api/subscribe/by-name/:name", writeLimiter, (req, res) => {
-  db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
+  req.house.db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
   res.json({ ok: true });
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
-  db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
+  req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
   res.json({ ok: true });
 });
 
@@ -407,9 +640,9 @@ app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
 // no page load or confirmation click required. Same effect as the DELETE
 // route above, just reachable the way a mail client actually calls it.
 app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
-  const row = db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
+  const row = req.house.db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
     .get(req.params.token, req.params.token.toLowerCase());
-  if (row) db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
+  if (row) req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
   res.status(200).send("OK");
 });
 
@@ -429,6 +662,11 @@ app.listen(PORT, () => {
 // due tomorrow, so most runs send zero mail; that's expected, not a bug.
 // Validated at startup: an invalid cron expression must not crash the whole
 // server, and a typo in .env must not silently disable the reminder either.
+//
+// Scoped to the original house only — a custom house's members can still
+// subscribe and get a one-off confirmation/scan-result email (both routes
+// above are per-house), but this scheduled digest doesn't yet iterate every
+// house. Worth building once there's more than a couple of custom houses.
 const DEFAULT_NOTIFY_CRON = "0 18 * * *";
 const NOTIFY_CRON = process.env.NOTIFY_CRON || DEFAULT_NOTIFY_CRON;
 if (!cron.validate(NOTIFY_CRON)) {
@@ -436,7 +674,7 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
-    const result = await sendDailyReminders(db, currentRoster());
+    const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     if (!result.dueTomorrow) {
       console.log("Reminder check: nothing due tomorrow, no mail sent.");
       return;
@@ -461,7 +699,7 @@ if (!cron.validate(WEEK_AHEAD_CRON)) {
 }
 cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AHEAD_CRON, async () => {
   try {
-    const result = await sendWeekAheadNotices(db, currentRoster());
+    const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
   } catch (err) {

@@ -24,6 +24,35 @@ function codesFor(d) {
   return map[d.getDate()] || null;
 }
 
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function dateKeyOf(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// A flat "date key -> code" lookup works for both the original house's
+// hardcoded calendar and a custom house's DB-backed one, so the rest of the
+// app (tasks.js) only ever has to know about this one shape.
+function flattenSchedule(scheduleMap) {
+  const flat = {};
+  Object.keys(scheduleMap).forEach((monthK) => {
+    const [y, m] = monthK.split("-").map(Number);
+    const days = scheduleMap[monthK];
+    Object.keys(days).forEach((day) => {
+      flat[`${y}-${pad2(m)}-${pad2(Number(day))}`] = days[day];
+    });
+  });
+  return flat;
+}
+
+function codesForFlat(d, flatSchedule) {
+  return (flatSchedule && flatSchedule[dateKeyOf(d)]) || null;
+}
+
+const DEFAULT_FLAT_SCHEDULE = flattenSchedule(SCHEDULE);
+
 function mondayOf(d) {
   const day = (d.getDay() + 6) % 7;
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
@@ -43,4 +72,7 @@ function personForWeek(date, roster) {
   return roster[idx];
 }
 
-module.exports = { SCHEDULE, ANCHOR_MONDAY, codesFor, mondayOf, weekKeyOf, personForWeek, monthKey };
+module.exports = {
+  SCHEDULE, ANCHOR_MONDAY, codesFor, mondayOf, weekKeyOf, personForWeek, monthKey,
+  flattenSchedule, codesForFlat, DEFAULT_FLAT_SCHEDULE
+};

@@ -194,6 +194,36 @@
     background: var(--surface-2); border: 2px solid var(--line); border-radius: 6px; padding: 9px 10px;
   }
   .claim-status { font-size: 13px; color: var(--ink-soft); }
+
+  /* ---- custom-themed dropdown (replaces every native <select> popup,
+     which no browser lets CSS reach) — see enhanceSelect() in app.js ---- */
+  .select-wrap { display: contents; }
+  .select-native { display: none; }
+  .select-trigger {
+    position: relative; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; cursor: pointer; user-select: none;
+  }
+  .select-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .select-trigger.open { border-color: var(--accent); }
+  .select-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select-chev {
+    flex: none; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    opacity: 0.6; transform: rotate(45deg) translateY(-2px); transition: transform 0.15s ease;
+  }
+  .select-trigger.open .select-chev { transform: rotate(-135deg) translateY(1px); }
+  .select-popup {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 200;
+    max-height: 240px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .select-popup[hidden] { display: none; }
+  .select-trigger.drop-up .select-popup { top: auto; bottom: calc(100% + 6px); }
+  .select-option {
+    padding: 9px 11px; border-radius: 7px; font-family: 'Work Sans', sans-serif; font-size: 13px;
+    font-weight: 600; color: var(--ink);
+  }
+  .select-option.active { background: var(--surface-2); }
+  .select-option.selected { color: var(--accent); }
   .leaderboard { display: flex; flex-direction: column; gap: 7px; padding-top: 12px; border-top: 1px dashed var(--line); }
   .lb-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; }
   .lb-row.mine { border-color: var(--accent); background: var(--accent-soft); }
@@ -254,6 +284,10 @@
   .cal-cell .dots { display: flex; gap: 2px; min-height: 8px; }
   .cal-cell .dots .dot { width: 7px; height: 7px; }
   .cal-cell .hday { font-size: 8px; color: var(--wrong); font-weight: 700; }
+  .cal-who { font-size: 8px; font-weight: 700; color: var(--ink-soft); background: var(--surface); border-radius: 4px; padding: 1px 4px; line-height: 1.3; }
+  .cal-cam { font-size: 9px; line-height: 1; }
+  .cal-cell.has-photos { cursor: pointer; }
+  .cal-cell.has-photos:hover, .cal-cell.has-photos:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
   /* ---- legend ---- */
   .legend { display: flex; flex-wrap: wrap; gap: 12px 16px; font-size: 12px; color: var(--ink-soft); }
@@ -289,10 +323,15 @@
     padding: 4px; border-radius: 6px; cursor: pointer;
     display: flex; flex-direction: column; align-items: center; gap: 4px;
   }
-  .tab-icon { width: 18px; height: 18px; border-radius: 5px; background: var(--ink-faint); }
+  /* The rounded square (faint when idle, accent when active) with the page's
+     icon drawn on top of it in the dark ink. */
+  .tab-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--ink-faint); display: flex; align-items: center; justify-content: center; }
+  .tab-glyph { width: 18px; height: 18px; display: block; fill: none; stroke: var(--bg); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .tab-btn:hover { color: var(--ink-soft); }
+  .tab-btn:hover .tab-icon { background: var(--ink-soft); }
   .tab-btn.active { color: var(--accent); }
   .tab-btn.active .tab-icon { background: var(--accent); }
+  .tab-btn.active .tab-glyph { stroke: var(--accent-ink); }
   .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   @media (min-width: 900px) {
@@ -346,6 +385,17 @@
   .hero-action .claim-select { flex: 1; min-width: 0; }
   .hero-btn { flex: 1; padding: 14px; border-radius: 9px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
   .hero-card .reactions-row { padding-top: 14px; border-top: 1px dashed var(--line); }
+
+  /* ---- optional proof photo on out/back ---- */
+  .photo-attach { display: flex; align-items: center; gap: 8px; }
+  .photo-attach[hidden] { display: none; }
+  .photo-attach-btn { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; cursor: pointer; border-radius: 9px; overflow: hidden; background: var(--surface-2); border: 1px dashed var(--line); min-height: 36px; }
+  .photo-attach-idle { display: flex; align-items: center; gap: 7px; color: var(--ink-faint); font-size: 12px; padding: 8px 12px; }
+  .photo-attach-thumb { width: 100%; height: 64px; object-fit: cover; display: block; }
+  .photo-attach-thumb:not([hidden]) ~ .photo-attach-idle { display: none; }
+  .photo-attach-x { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
+  .photo-attach-x[hidden] { display: none; }
+  .hero-photo-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-faint); }
   .reaction-hint { background: none; border: none; cursor: pointer; padding: 0; font-size: 11.5px; font-family: 'Work Sans', sans-serif; }
   .reaction-hint.donate { color: var(--accent); font-weight: 700; }
 
@@ -396,6 +446,15 @@
   .scan-email-row .claim-select { flex: 1; min-width: 0; }
   .scan-footnote { font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
 
+  /* ---- anonymous chat: entry button + "coming soon" screen ---- */
+  .chat-pill { width: 100%; font-family: 'Work Sans', sans-serif; color: var(--ink); text-align: left; cursor: pointer; }
+  .chat-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .soon-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 9px; }
+  .chat-soon { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 28px 22px; }
+  .chat-soon-icon { width: 54px; height: 54px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 4px; }
+  .chat-soon-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.03em; color: var(--accent); }
+  .chat-soon-body { font-size: 13px; color: var(--ink-soft); line-height: 1.55; max-width: 32ch; }
+
   /* ---- roster tab (Timetable & roster) ---- */
   .page-title { font-size: 18px; font-weight: 600; color: var(--ink); }
   .tw-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
@@ -412,7 +471,10 @@
   .upcoming-row .up-rel { font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
   .upcoming-row .up-rel.tonight { color: var(--accent); font-weight: 600; }
   .upcoming-empty { font-size: 12px; color: var(--ink-faint); }
-  .rotation-list { display: flex; flex-direction: column; gap: 8px; }
+  /* Shows exactly 2 rows (row height 36px avatar + 20px padding = 56px,
+     plus one 8px gap between them); the rest scroll instead of pushing
+     the rest of the page down. */
+  .rotation-list { display: flex; flex-direction: column; gap: 8px; max-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
   .rotation-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; }
   .rotation-row .avatar { width: 36px; height: 36px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 13px; }
   .rotation-row.subscribed .avatar::after { content: ""; position: absolute; top: -2px; right: -2px; bottom: auto; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
@@ -430,7 +492,10 @@
   .balance-sub { font-size: 11.5px; color: var(--ink-faint); line-height: 1.45; margin-top: 8px; }
   .row-head { display: flex; align-items: baseline; justify-content: space-between; }
   .row-head-r { font-size: 10.5px; color: var(--ink-faint); }
-  .lb-list { display: flex; flex-direction: column; gap: 8px; }
+  /* Shows exactly 3 rows (row height ~48px: 28px avatar + 20px padding,
+     plus 8px gaps between them); the rest scroll instead of growing the
+     page with every housemate on the leaderboard. */
+  .lb-list { display: flex; flex-direction: column; gap: 8px; max-height: 168px; overflow-y: auto; overscroll-behavior: contain; }
   .lb-list .lb-row { padding: 10px 14px; border-radius: 12px; gap: 12px; }
   .lb-list .lb-rank { color: var(--ink-faint); font-size: 14px; }
   .lb-list .lb-avatar { width: 28px; height: 28px; background: var(--surface-2) !important; border: 1px solid var(--line); color: var(--ink); font-family: 'Work Sans', sans-serif; font-weight: 600; font-size: 11px; }
@@ -474,8 +539,68 @@
   .me-picker { display: flex; flex-direction: column; gap: 8px; }
   .me-picker .claim-select { align-self: flex-start; }
   .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
-  #occupationRow .eyebrow { margin-bottom: 8px; }
   .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---- houses ---- */
+  .houses-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .house-list { display: flex; flex-direction: column; gap: 8px; }
+  .house-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid transparent; }
+  .house-row.current { border-color: var(--accent); background: var(--accent-soft); }
+  .house-row-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 15px; flex: none; }
+  .house-row-text { flex: 1; min-width: 0; }
+  .house-row-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .house-row-sub { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+  .house-row-copy { flex: none; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--ink-soft); font-family: 'Work Sans', sans-serif; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .house-row-copy.copied { color: var(--accent); border-color: var(--accent-soft); }
+  .houses-empty { font-size: 12px; color: var(--ink-faint); padding: 4px 2px; }
+  .houses-actions { display: flex; gap: 8px; }
+  .houses-actions .stamp-btn { flex: 1; padding: 11px; font-size: 12.5px; }
+  .house-form { display: flex; flex-direction: column; gap: 8px; }
+  .house-form[hidden] { display: none; }
+  .house-form .claim-row .claim-select { flex: 1; min-width: 0; }
+
+  /* ---- destroy house (builder only) ---- */
+  .destroy-box { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .destroy-box[hidden], .destroy-confirm[hidden] { display: none; }
+  .destroy-note { font-size: 11px; color: var(--ink-faint); }
+  .destroy-toggle { align-self: flex-start; background: none; border: none; padding: 0; color: var(--wrong); font-family: 'Work Sans', sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .destroy-toggle:focus-visible { outline: 2px solid var(--wrong); outline-offset: 3px; border-radius: 4px; }
+  .destroy-confirm { display: flex; flex-direction: column; gap: 8px; }
+  .destroy-warning { font-size: 12px; line-height: 1.5; color: var(--ink-soft); background: rgba(226,67,47,0.1); border: 1px solid rgba(226,67,47,0.4); border-radius: 10px; padding: 10px 12px; }
+  .destroy-warning strong { color: var(--ink); }
+  .destroy-confirm .claim-row .claim-select { flex: 1; min-width: 0; }
+  .stamp-btn.destroy-btn { background: var(--wrong); color: #fff; border-color: var(--wrong); }
+
+  /* ---- landing page (no house selected — build or join only) ---- */
+  #landingPage { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
+  #landingPage[hidden] { display: none; }
+  .landing-card { width: 100%; max-width: 360px; padding: 28px 22px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+  .landing-logo { width: 60px; height: 60px; border-radius: 17px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 28px; margin-bottom: 6px; }
+  .landing-brand { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 0.04em; color: var(--accent); }
+  .landing-tagline { font-size: 12.5px; color: var(--ink-faint); margin-bottom: 18px; }
+  .landing-card .house-list { width: 100%; }
+  .landing-card .houses-actions { width: 100%; margin-top: 4px; }
+  .landing-card .house-form { width: 100%; margin-top: 4px; }
+
+  /* ---- house-not-found full page ---- */
+  #houseNotFound { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  #houseNotFound[hidden] { display: none; }
+  .hnf-card { max-width: 340px; padding: 24px 22px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .hnf-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 0.02em; }
+  .hnf-body { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin-bottom: 6px; }
+  #houseNotFoundHomeLink { display: inline-block; padding: 12px 20px; text-decoration: none; }
+
+  /* ---- task proof-photo viewer ---- */
+  #taskPhotoModal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  #taskPhotoModal[hidden] { display: none; }
+  #photoModalBackdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); }
+  .photo-modal-card { position: relative; z-index: 1; max-width: 420px; width: 100%; max-height: calc(100% - 20px); overflow-y: auto; padding: 20px 18px; }
+  .photo-modal-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-faint); font-size: 12px; cursor: pointer; }
+  .photo-modal-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 0.03em; margin: 0 30px 14px 0; }
+  .photo-modal-grid { display: flex; flex-direction: column; gap: 14px; }
+  .photo-modal-fig { margin: 0; }
+  .photo-modal-fig img { width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; }
+  .photo-modal-fig figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
   #subscribeForm { display: flex; flex-direction: column; gap: 8px; }
   #subscribeForm .claim-row .claim-select { flex: 1; min-width: 0; }
   .sub-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
@@ -518,9 +643,25 @@
         <div class="avatar hero-avatar" id="homeDutyAvatar"></div>
         <div class="hero-status" id="claimStatus"></div>
       </div>
+      <div class="photo-attach" id="outPhotoAttach">
+        <label class="photo-attach-btn" id="outPhotoLabel" for="outPhotoInput">
+          <img class="photo-attach-thumb" id="outPhotoThumb" alt="" hidden>
+          <span class="photo-attach-idle" id="outPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="outPhotoPrompt"></span></span>
+        </label>
+        <input type="file" id="outPhotoInput" accept="image/*" capture="environment" hidden>
+        <button class="photo-attach-x" id="outPhotoClear" type="button" hidden>&#10005;</button>
+      </div>
       <div class="claim-row hero-action" id="outRow" hidden>
         <select class="claim-select" id="outNameSelect"></select>
         <button class="stamp-btn hero-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
+      </div>
+      <div class="photo-attach" id="backPhotoAttach">
+        <label class="photo-attach-btn" id="backPhotoLabel" for="backPhotoInput">
+          <img class="photo-attach-thumb" id="backPhotoThumb" alt="" hidden>
+          <span class="photo-attach-idle" id="backPhotoIdle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M8 6l1.5-2.5h5L16 6"></path><circle cx="12" cy="13" r="3.2"></circle></svg><span data-i18n="backPhotoPrompt"></span></span>
+        </label>
+        <input type="file" id="backPhotoInput" accept="image/*" capture="environment" hidden>
+        <button class="photo-attach-x" id="backPhotoClear" type="button" hidden>&#10005;</button>
       </div>
       <div class="claim-row hero-action" id="backRow" hidden>
         <select class="claim-select" id="backNameSelect"></select>
@@ -546,11 +687,13 @@
       <div class="roster-avatars" id="rosterStripHome"></div>
     </div>
 
-    <div class="poster coins-pill" id="homeCoinsPill">
-      <div class="coins-pill-icon" id="homeCoinsAvatar">S</div>
-      <div class="coins-pill-label" id="homeCoinsLabel"></div>
-      <button class="coins-pill-link" id="rewardsJumpBtn" type="button" data-i18n="rewardsJump"></button>
-    </div>
+    <!-- Entry point for the anonymous house chat. The chat itself isn't built
+         yet — this opens a "coming soon" screen (see #chatSubview). -->
+    <button class="poster coins-pill chat-pill" id="chatEntryBtn" type="button">
+      <span class="coins-pill-icon on">&#128172;</span>
+      <span class="coins-pill-label" data-i18n="chatEntryLabel"></span>
+      <span class="soon-badge" data-i18n="chatSoonBadge"></span>
+    </button>
 
     <div class="launch-row">
       <button class="launch-btn launch-primary" id="scanLaunchBtn" type="button" data-i18n="scanLaunch"></button>
@@ -605,6 +748,16 @@
     </div>
   </section>
 
+  <!-- Anonymous chat: not built yet — a plain "coming soon" screen. -->
+  <section data-view="home" id="chatSubview" hidden>
+    <button class="subview-head" id="chatBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="chatEntryLabel"></span></button>
+    <div class="poster chat-soon">
+      <div class="chat-soon-icon">&#128172;</div>
+      <div class="chat-soon-title" data-i18n="chatSoonTitle"></div>
+      <div class="chat-soon-body" data-i18n="chatSoonBody"></div>
+    </div>
+  </section>
+
   <section data-view="home" id="scanSubview" hidden>
     <button class="subview-head" id="scanBackBtn" type="button"><span class="chev">&#8249;</span><span id="scanTitle" data-i18n="scanScreenTitle"></span></button>
     <label class="poster scan-photo" id="scanLabel" for="scanInput">
@@ -645,7 +798,7 @@
     <div class="section-head"><h2 data-i18n="fullCalendarHeading"></h2></div>
     <div class="legend" id="legendRow"></div>
     <div id="calendarMonths" style="display:flex; flex-direction:column; gap:10px;"></div>
-    <div class="stakes"><strong data-i18n="stakesStrong"></strong> <span data-i18n="stakesRest"></span></div>
+    <div class="stakes"><strong id="stakesStrong"></strong> <span id="stakesRest"></span></div>
   </section>
 
   <section data-view="rewards">
@@ -702,13 +855,6 @@
         <select class="claim-select" id="meSelect"></select>
         <div class="claim-status" id="meStatus"></div>
       </div>
-      <div id="occupationRow" hidden>
-        <div class="eyebrow" data-i18n="occupationLabel"></div>
-        <div class="claim-row">
-          <input type="text" id="occupationInput" class="claim-select" maxlength="60" data-i18n-placeholder="occupationPlaceholder">
-          <button class="stamp-btn ghost" id="occupationSaveBtn" type="button" data-i18n="occupationSaveBtn"></button>
-        </div>
-      </div>
     </div>
     <div>
       <div class="eyebrow" data-i18n="languageLabel"></div>
@@ -741,14 +887,122 @@
     </div>
   </section>
 
+  <section data-view="you">
+    <div class="eyebrow" data-i18n="housesLabel"></div>
+    <div class="poster houses-card" id="housesCard">
+      <div class="house-list" id="housesList"></div>
+
+      <div class="houses-actions">
+        <button class="stamp-btn ghost" id="buildHouseToggleBtn" type="button" data-i18n="buildHouseBtn"></button>
+        <button class="stamp-btn ghost" id="joinHouseToggleBtn" type="button" data-i18n="joinHouseBtn"></button>
+      </div>
+
+      <div class="house-form" id="buildHouseForm" hidden>
+        <div class="claim-row">
+          <input type="text" id="buildHouseName" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseNamePlaceholder">
+        </div>
+        <div class="claim-row">
+          <input type="text" id="buildHouseCity" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseCityPlaceholder">
+          <button class="stamp-btn" id="buildHouseSubmitBtn" type="button" data-i18n="buildHouseSubmitBtn"></button>
+        </div>
+        <div class="claim-status" id="buildHouseStatus"></div>
+      </div>
+
+      <div class="house-form" id="joinHouseForm" hidden>
+        <div class="claim-row">
+          <input type="text" id="joinHouseInput" class="claim-select" data-i18n-placeholder="joinHouseInputPlaceholder">
+          <button class="stamp-btn" id="joinHouseSubmitBtn" type="button" data-i18n="joinHouseSubmitBtn"></button>
+        </div>
+        <div class="claim-status" id="joinHouseStatus"></div>
+      </div>
+
+      <!-- Only on the device that built this house (it holds the owner key). -->
+      <div class="destroy-box" id="destroyHouseBox" hidden>
+        <div class="destroy-note" data-i18n="destroyHouseOwnerNote"></div>
+        <button class="destroy-toggle" id="destroyToggleBtn" type="button" data-i18n="destroyHouseBtn"></button>
+        <div class="destroy-confirm" id="destroyConfirm" hidden>
+          <div class="destroy-warning" id="destroyWarning"></div>
+          <div class="claim-row">
+            <input type="text" id="destroyNameInput" class="claim-select" autocomplete="off" data-i18n-placeholder="destroyHousePlaceholder">
+            <button class="stamp-btn destroy-btn" id="destroySubmitBtn" type="button" data-i18n="destroyHouseConfirmBtn" disabled></button>
+          </div>
+          <div class="claim-status" id="destroyStatus"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <footer data-i18n="footerText" data-view="roster"></footer>
 </div>
 
+<div id="landingPage" hidden>
+  <div class="landing-card poster">
+    <div class="landing-logo">🗑️</div>
+    <div class="landing-brand">BIN DUTY</div>
+    <div class="landing-tagline" data-i18n="landingTagline"></div>
+
+    <div class="house-list" id="landingHousesList"></div>
+
+    <div class="houses-actions">
+      <button class="stamp-btn" id="landingBuildToggleBtn" type="button" data-i18n="buildHouseBtn"></button>
+      <button class="stamp-btn ghost" id="landingJoinToggleBtn" type="button" data-i18n="joinHouseBtn"></button>
+    </div>
+
+    <div class="house-form" id="landingBuildForm" hidden>
+      <div class="claim-row">
+        <input type="text" id="landingBuildName" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseNamePlaceholder">
+      </div>
+      <div class="claim-row">
+        <input type="text" id="landingBuildCity" class="claim-select" maxlength="60" data-i18n-placeholder="buildHouseCityPlaceholder">
+        <button class="stamp-btn" id="landingBuildSubmitBtn" type="button" data-i18n="buildHouseSubmitBtn"></button>
+      </div>
+      <div class="claim-status" id="landingBuildStatus"></div>
+    </div>
+
+    <div class="house-form" id="landingJoinForm" hidden>
+      <div class="claim-row">
+        <input type="text" id="landingJoinInput" class="claim-select" data-i18n-placeholder="joinHouseInputPlaceholder">
+        <button class="stamp-btn" id="landingJoinSubmitBtn" type="button" data-i18n="joinHouseSubmitBtn"></button>
+      </div>
+      <div class="claim-status" id="landingJoinStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div id="houseNotFound" hidden>
+  <div class="hnf-card poster">
+    <div class="hnf-title" data-i18n="houseNotFoundTitle"></div>
+    <div class="hnf-body" data-i18n="houseNotFoundBody"></div>
+    <a class="stamp-btn" id="houseNotFoundHomeLink" data-i18n="houseNotFoundHomeLink"></a>
+  </div>
+</div>
+
+<div id="taskPhotoModal" hidden>
+  <div id="photoModalBackdrop"></div>
+  <div class="photo-modal-card poster">
+    <button class="photo-modal-close" id="photoModalClose" type="button" aria-label="Close">&#10005;</button>
+    <div class="photo-modal-title" id="photoModalTitle"></div>
+    <div class="photo-modal-grid" id="photoModalGrid"></div>
+  </div>
+</div>
+
 <nav class="tabbar" id="tabbar">
-  <button class="tab-btn" type="button" data-goto="home"><span class="tab-icon"></span><span data-i18n="tabHome"></span></button>
-  <button class="tab-btn" type="button" data-goto="roster"><span class="tab-icon"></span><span data-i18n="tabRoster"></span></button>
-  <button class="tab-btn" type="button" data-goto="rewards"><span class="tab-icon"></span><span data-i18n="tabRewards"></span></button>
-  <button class="tab-btn" type="button" data-goto="you"><span class="tab-icon"></span><span data-i18n="tabYou"></span></button>
+  <button class="tab-btn" type="button" data-goto="home">
+    <span class="tab-icon"><svg class="tab-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5L12 3.5l8.5 7"/><path d="M5.5 9v10.5h13V9"/><path d="M10 19.5v-5.5h4v5.5"/></svg></span>
+    <span data-i18n="tabHome"></span>
+  </button>
+  <button class="tab-btn" type="button" data-goto="roster">
+    <span class="tab-icon"><svg class="tab-glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17"/><path d="M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2M8 17h2"/></svg></span>
+    <span data-i18n="tabRoster"></span>
+  </button>
+  <button class="tab-btn" type="button" data-goto="rewards">
+    <span class="tab-icon"><svg class="tab-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4h9v5a4.5 4.5 0 01-9 0V4z"/><path d="M7.5 6H4.5a3 3 0 003 3.5M16.5 6h3a3 3 0 01-3 3.5"/><path d="M12 13.5v3.5"/><path d="M8.5 20.5h7M9.5 17h5v3.5h-5z"/></svg></span>
+    <span data-i18n="tabRewards"></span>
+  </button>
+  <button class="tab-btn" type="button" data-goto="you">
+    <span class="tab-icon"><svg class="tab-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0115 0"/></svg></span>
+    <span data-i18n="tabYou"></span>
+  </button>
 </nav>
 
 <script src="/i18n.js"></script>

@@ -21,8 +21,10 @@ function fromHeader() {
 // the URL — no page load, no confirmation click. Only meaningful on
 // recurring subscription mail, not a one-off action email like a camera
 // check result.
-function unsubscribeHeaders(email) {
-  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}`;
+function unsubscribeHeaders(email, houseSlug) {
+  // ?h= is required now — there's no implicit default house for a bare
+  // unsubscribe link to fall back to.
+  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}?h=${encodeURIComponent(houseSlug)}`;
   return {
     "List-Unsubscribe": `<mailto:${process.env.SMTP_USER}?subject=unsubscribe>, <${url}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
@@ -81,7 +83,7 @@ function buildTomorrowMessage(lang, roster, tomorrow) {
 // Sends a "click to confirm" email for double opt-in — an open, unverified
 // /api/subscribe would otherwise let anyone sign up anyone else's address,
 // which is exactly the pattern that gets an SMTP account flagged as spam.
-async function sendConfirmationEmail(email, lang, name, confirmUrl) {
+async function sendConfirmationEmail(email, lang, name, confirmUrl, houseSlug) {
   const transport = getTransporter();
   if (!transport) {
     const err = new Error("Email isn't configured on the server.");
@@ -102,14 +104,14 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl) {
     subject: t(lang, "confirmSubject"),
     text: `${bodyText}\n\n${confirmUrl}`,
     html,
-    headers: unsubscribeHeaders(email)
+    headers: unsubscribeHeaders(email, houseSlug)
   });
 }
 
 // Sends tomorrow's reminder to every CONFIRMED account, each in their own
 // preferred language — but only on days that actually have a collection
 // tomorrow. Returns { sent, skipped, errors, dueTomorrow } for logging.
-async function sendDailyReminders(db, roster) {
+async function sendDailyReminders(db, roster, houseSlug) {
   const transport = getTransporter();
   const accounts = db.prepare("SELECT email, name, language FROM accounts WHERE confirmed = 1").all();
 
@@ -133,7 +135,7 @@ async function sendDailyReminders(db, roster) {
         subject: msg.subject,
         text: `${t(account.language, "dutyHeading")} — ${account.name}\n\n${msg.text}`,
         html: msg.html,
-        headers: unsubscribeHeaders(account.email)
+        headers: unsubscribeHeaders(account.email, houseSlug)
       });
       sent++;
     } catch (err) {
@@ -159,7 +161,7 @@ function buildWeekAheadMessage(lang, roster, nextMonday) {
   return { subject, text, html, person };
 }
 
-async function sendWeekAheadNotices(db, roster) {
+async function sendWeekAheadNotices(db, roster, houseSlug) {
   const transport = getTransporter();
   const accounts = db.prepare("SELECT email, name, language FROM accounts WHERE confirmed = 1").all();
   if (!transport) return { sent: 0, skipped: accounts.length, errors: [] };
@@ -179,7 +181,7 @@ async function sendWeekAheadNotices(db, roster) {
         subject: msg.subject,
         text: msg.text,
         html: msg.html,
-        headers: unsubscribeHeaders(account.email)
+        headers: unsubscribeHeaders(account.email, houseSlug)
       });
       sent++;
     } catch (err) {

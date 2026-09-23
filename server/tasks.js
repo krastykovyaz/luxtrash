@@ -4,7 +4,7 @@
 // collection date ("occurs a day before expiration") and stays open — even
 // past its date, as overdue — until someone closes the loop.
 
-const { codesFor } = require("./rotation");
+const { codesForFlat } = require("./rotation");
 
 const COINS_PER_TASK = 10;
 const LOOKBACK_DAYS = 14; // how far back to surface a missed, still-open task
@@ -34,11 +34,11 @@ function isValidDateKey(key) {
 
 // Every real collection date (codes present, not a holiday) from
 // `from` to `to` inclusive, oldest first.
-function collectionDatesInRange(from, to) {
+function collectionDatesInRange(from, to, flatSchedule) {
   const dates = [];
   const cursor = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   while (cursor <= to) {
-    const codes = codesFor(cursor);
+    const codes = codesForFlat(cursor, flatSchedule);
     if (codes && codes !== "HOLIDAY") dates.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -68,7 +68,7 @@ function ensureTaskRow(db, dateKey, codes) {
 //    just quietly age out instead of cluttering the current task forever.
 //
 // Returns null when nothing is open.
-function getCurrentTask(db, today) {
+function getCurrentTask(db, today, flatSchedule) {
   const openRow = db.prepare(
     "SELECT * FROM tasks WHERE out_at IS NOT NULL AND back_at IS NULL ORDER BY date_key ASC LIMIT 1"
   ).get();
@@ -78,14 +78,14 @@ function getCurrentTask(db, today) {
 
   const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 3);
   const windowEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  const candidates = collectionDatesInRange(from, windowEnd);
+  const candidates = collectionDatesInRange(from, windowEnd, flatSchedule);
 
   for (const date of candidates) {
     const opensAt = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
     if (today < opensAt) continue; // window not open yet
     const dateKey = dateKeyOf(date);
     if (dateKey < dateKeyOf(today)) continue; // never started and already past — let it go
-    const codes = codesFor(date);
+    const codes = codesForFlat(date, flatSchedule);
     const row = getTaskRow(db, dateKey) || { date_key: dateKey, codes, out_by: null, out_at: null, back_by: null, back_at: null, coins: COINS_PER_TASK };
     if (!row.back_at) {
       return { ...row, overdue: false, started: false };
@@ -94,14 +94,14 @@ function getCurrentTask(db, today) {
   return null;
 }
 
-function confirmOut(db, dateKey, roster, name) {
+function confirmOut(db, dateKey, roster, name, flatSchedule) {
   if (!isValidDateKey(dateKey)) {
     const err = new Error("That's not a real collection date.");
     err.status = 400;
     throw err;
   }
   const date = parseDateKey(dateKey);
-  const codes = codesFor(date);
+  const codes = codesForFlat(date, flatSchedule);
   if (!codes || codes === "HOLIDAY") {
     const err = new Error("There's no collection on that date.");
     err.status = 400;

@@ -37,6 +37,79 @@
   var AVATAR_COLORS = ["#55A3CE", "#E7B62B", "#D08A3E", "#B08DE0", "#E2604A", "#6FB25F", "#63C7A6", "#C77DBB"];
   var ANCHOR_MONDAY = new Date(2026, 8, 21);
 
+  // ---- which house — a plain URL param (?h=slug), never a login. The
+  // original house (this app's very first one) has no param at all, so
+  // every link and bookmark that predates multi-house keeps working
+  // unchanged. api() appends it to every request; a bare "" means "the
+  // original house" both here and on the server. ----
+  var HOUSE_SLUG = "";
+  try {
+    HOUSE_SLUG = new URLSearchParams(location.search).get("h") || "";
+  } catch (e) {}
+  function api(path) {
+    if (!HOUSE_SLUG) return path;
+    var sep = path.indexOf("?") === -1 ? "?" : "&";
+    return path + sep + "h=" + encodeURIComponent(HOUSE_SLUG);
+  }
+  // The houses this device has built or joined — shown on the You tab, each
+  // with its own shareable link. Purely local, like everything else here:
+  // nothing about "which houses you're in" lives on any server.
+  var MY_HOUSES = [];
+  (function initMyHouses() {
+    try {
+      var saved = JSON.parse(localStorage.getItem("binDutyMyHouses") || "[]");
+      // slug === "" used to mean "the original house" before it needed its
+      // own real invite link too — that entry is stale now (it would point
+      // at the landing page), so it's dropped on load rather than shown.
+      if (Array.isArray(saved)) MY_HOUSES = saved.filter(function (h) { return h && h.slug; });
+    } catch (e) {}
+  })();
+  function rememberHouse(slug, name) {
+    // slug === "" is the original house, a legitimate value here — not
+    // "nothing to remember" — so this only guards against a truly missing
+    // argument (undefined/null), never against the empty string.
+    if (slug == null) return;
+    MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
+    MY_HOUSES.unshift({ slug: slug, name: name || slug });
+    try { localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES)); } catch (e) {}
+  }
+  // Owner keys for houses this browser built — the only proof of "who built
+  // it" in an app with no accounts. Handed out once by the server at build
+  // time; needed to destroy the house. Losing this storage loses the key.
+  function getOwnerTokens() {
+    try {
+      var t = JSON.parse(localStorage.getItem("binDutyOwnerTokens") || "{}");
+      return t && typeof t === "object" ? t : {};
+    } catch (e) { return {}; }
+  }
+  function setOwnerToken(slug, token) {
+    var t = getOwnerTokens();
+    if (token) t[slug] = token; else delete t[slug];
+    try { localStorage.setItem("binDutyOwnerTokens", JSON.stringify(t)); } catch (e) {}
+  }
+  function forgetHouse(slug) {
+    MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
+    try {
+      localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES));
+      localStorage.removeItem("binDutyMe:" + slug);
+      localStorage.removeItem("binDutyBestStreak:" + slug);
+    } catch (e) {}
+    setOwnerToken(slug, null);
+  }
+  function houseLink(slug) {
+    var url = new URL(location.href);
+    url.search = slug ? "?h=" + encodeURIComponent(slug) : "";
+    url.hash = "";
+    return url.toString();
+  }
+  // Per-person state (who you are, your best streak) is scoped per house —
+  // the original house keeps its unprefixed key untouched, so nothing about
+  // existing data changes; every other house gets its own namespaced key so
+  // switching houses never leaks or prefills the wrong identity.
+  function houseKey(base) {
+    return HOUSE_SLUG ? base + ":" + HOUSE_SLUG : base;
+  }
+
   // ---- "who am I" — a local-only preference, not an account. There is no
   // login anywhere in this app; this is exactly the same kind of choice as
   // the language picker (stored in this browser, nothing sent anywhere
@@ -45,15 +118,15 @@
   var ME = "";
   (function initMe() {
     try {
-      var saved = localStorage.getItem("binDutyMe");
+      var saved = localStorage.getItem(houseKey("binDutyMe"));
       if (saved) ME = saved;
     } catch (e) {}
   })();
   function setMe(name) {
     ME = name || "";
     try {
-      if (ME) localStorage.setItem("binDutyMe", ME);
-      else localStorage.removeItem("binDutyMe");
+      if (ME) localStorage.setItem(houseKey("binDutyMe"), ME);
+      else localStorage.removeItem(houseKey("binDutyMe"));
     } catch (e) {}
   }
 
@@ -102,6 +175,7 @@
 
   function pad(n) { return String(n).padStart(2, "0"); }
   function monthKey(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1); }
+  function dateKeyOf(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function codesFor(d) {
     var map = SCHEDULE[monthKey(d)];
     if (!map) return null;
@@ -126,10 +200,16 @@
   function initials(name) {
     return name.split(" ").map(function (p) { return p[0]; }).join("").slice(0, 2).toUpperCase();
   }
-  function personForWeek(date) {
+  // Weeks since the same fixed Monday the duty rotation counts from — one
+  // shared "which week is this" clock the whole app can index into,
+  // whether that's whose turn it is or which tip shows on the calendar.
+  function weeksSinceAnchor(date) {
     var mon = mondayOf(date);
     var anchorMon = mondayOf(ANCHOR_MONDAY);
-    var diffWeeks = Math.round((mon - anchorMon) / (7 * 86400000));
+    return Math.round((mon - anchorMon) / (7 * 86400000));
+  }
+  function personForWeek(date) {
+    var diffWeeks = weeksSinceAnchor(date);
     var idx = ((diffWeeks % ROSTER.length) + ROSTER.length) % ROSTER.length;
     return { name: ROSTER[idx], idx: idx };
   }
@@ -142,6 +222,146 @@
     thisWeek = personForWeek(today);
     nextWeek = personForWeek(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7));
   }
+
+  // ---- custom-themed dropdowns: a native <select>'s open popup can't be
+  // styled with CSS in any browser, so every select in the app gets
+  // wrapped in a small custom trigger + popup that IS themed, matching
+  // the rest of the UI. The real <select> stays in the DOM (hidden,
+  // display:none) as the actual value-holder — every existing call site
+  // elsewhere in this file keeps reading/writing .value and listening for
+  // "change" on it exactly as before; this only replaces how it's shown
+  // and clicked. Options are re-read from the select fresh each time the
+  // popup opens, so it always reflects whatever the many render*Select
+  // functions below have just filled it with. ----
+  function enhanceSelect(select) {
+    if (select.dataset.enhanced) return;
+    select.dataset.enhanced = "1";
+    var baseClass = select.className;
+
+    var wrap = document.createElement("span");
+    wrap.className = "select-wrap"; // display:contents — invisible to layout, so every
+    select.parentNode.insertBefore(wrap, select); // existing contextual rule on .claim-select/
+    wrap.appendChild(select);                     // .lang-select still matches the trigger below
+    select.classList.add("select-native");
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
+
+    var trigger = document.createElement("div");
+    // The real select is already display:none unconditionally (see
+    // .select-native), so its own .hidden no longer has any visible
+    // effect. Existing code all over this file still sets
+    // outNameSelect.hidden = ... etc. to show/hide the whole control
+    // depending on app state — this keeps that working by mirroring
+    // every such assignment onto the trigger, which is what's actually
+    // shown or hidden now.
+    var nativeHidden = select.hidden;
+    Object.defineProperty(select, "hidden", {
+      configurable: true,
+      get: function () { return nativeHidden; },
+      set: function (v) { nativeHidden = !!v; trigger.hidden = nativeHidden; }
+    });
+    trigger.className = baseClass + " select-trigger";
+    trigger.setAttribute("role", "button");
+    trigger.tabIndex = 0;
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    var labelSpan = document.createElement("span");
+    labelSpan.className = "select-trigger-label";
+    var chev = document.createElement("span");
+    chev.className = "select-chev";
+    var popup = document.createElement("div");
+    popup.className = "select-popup";
+    popup.setAttribute("role", "listbox");
+    popup.hidden = true;
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(chev);
+    trigger.appendChild(popup);
+    wrap.appendChild(trigger);
+
+    var activeIndex = -1;
+
+    function sync() {
+      var opt = select.options[select.selectedIndex];
+      labelSpan.textContent = opt ? opt.textContent : "";
+    }
+    select._syncTrigger = sync;
+
+    function setActive(i) {
+      var rows = popup.children;
+      if (activeIndex >= 0 && rows[activeIndex]) rows[activeIndex].classList.remove("active");
+      activeIndex = ((i % rows.length) + rows.length) % rows.length;
+      if (rows[activeIndex]) {
+        rows[activeIndex].classList.add("active");
+        rows[activeIndex].scrollIntoView({ block: "nearest" });
+      }
+    }
+    function commit(i) {
+      select.selectedIndex = i;
+      sync();
+      close();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function close() {
+      trigger.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+      popup.hidden = true;
+    }
+    function open() {
+      popup.innerHTML = "";
+      activeIndex = select.selectedIndex;
+      Array.prototype.forEach.call(select.options, function (opt, i) {
+        var row = document.createElement("div");
+        row.className = "select-option" + (i === select.selectedIndex ? " selected" : "");
+        row.setAttribute("role", "option");
+        row.textContent = opt.textContent;
+        row.addEventListener("click", function (ev) { ev.stopPropagation(); commit(i); });
+        popup.appendChild(row);
+      });
+      trigger.classList.remove("drop-up");
+      popup.hidden = false;
+      trigger.classList.add("open");
+      trigger.setAttribute("aria-expanded", "true");
+      // Flip above the trigger when there isn't room below (a picker
+      // opened from near the bottom tab bar, most often).
+      if (popup.getBoundingClientRect().bottom > window.innerHeight - 12) trigger.classList.add("drop-up");
+      setActive(activeIndex);
+    }
+
+    trigger.addEventListener("click", function () {
+      if (trigger.classList.contains("open")) close(); else open();
+    });
+    trigger.addEventListener("keydown", function (ev) {
+      var isOpen = trigger.classList.contains("open");
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        if (isOpen) commit(activeIndex); else open();
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        if (isOpen) setActive(activeIndex + 1); else open();
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        if (isOpen) setActive(activeIndex - 1); else open();
+      } else if (ev.key === "Escape" && isOpen) {
+        ev.preventDefault();
+        close();
+      } else if (ev.key === "Home" && isOpen) {
+        ev.preventDefault();
+        setActive(0);
+      } else if (ev.key === "End" && isOpen) {
+        ev.preventDefault();
+        setActive(popup.children.length - 1);
+      }
+    });
+    document.addEventListener("click", function (ev) {
+      if (!wrap.contains(ev.target)) close();
+    });
+
+    sync();
+  }
+  function syncSelectTrigger(select) {
+    if (select && select._syncTrigger) select._syncTrigger();
+  }
+  document.querySelectorAll("select.claim-select, select.lang-select").forEach(enhanceSelect);
 
   // ---- language switcher ----
   var langSelect = document.getElementById("langSelect");
@@ -162,6 +382,7 @@
       langSelectBuilt = true;
     }
     langSelect.value = currentLang;
+    syncSelectTrigger(langSelect);
   }
 
   // ---- tabbed views (phone width) — every [data-view] section stays in
@@ -185,16 +406,21 @@
   var homeDashboard = document.getElementById("homeDashboard");
   var scanSubview = document.getElementById("scanSubview");
   var sortItSubview = document.getElementById("sortItSubview");
+  var chatSubview = document.getElementById("chatSubview");
   function showHomeSubview(which) {
     homeDashboard.hidden = which !== "dashboard";
     scanSubview.hidden = which !== "scan";
     sortItSubview.hidden = which !== "sortit";
+    chatSubview.hidden = which !== "chat";
     window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   }
   document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
   document.getElementById("sortItLaunchBtn").addEventListener("click", function () { showHomeSubview("sortit"); });
   document.getElementById("scanBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
   document.getElementById("sortItBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
+  // Anonymous chat — not built yet; the button opens a "coming soon" screen.
+  document.getElementById("chatEntryBtn").addEventListener("click", function () { showHomeSubview("chat"); });
+  document.getElementById("chatBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
 
   function showView(view) {
     if (VIEWS.indexOf(view) === -1) view = "home";
@@ -218,7 +444,6 @@
   showView(currentView);
 
   document.getElementById("fullCalendarJumpBtn").addEventListener("click", function () { showView("roster"); });
-  document.getElementById("rewardsJumpBtn").addEventListener("click", function () { showView("rewards"); });
 
   function applyLang() {
     var meta = window.LANGS.find(function (l) { return l.code === currentLang; }) || window.LANGS[0];
@@ -247,10 +472,13 @@
     renderDuty();
     renderGuide();
     renderLegend();
+    renderStakes();
     renderCalendar();
     renderTaskForm();
     renderTask(currentTask);
     renderNotifyForm();
+    renderHousesList();
+    renderDestroyBox();
     gameShowItem();
     loadLeaderboard();
     loadSubscribers();
@@ -560,7 +788,7 @@
   var addNameBtn = document.getElementById("addNameBtn");
 
   function loadRosterFull() {
-    return fetch("/api/roster/full")
+    return fetch(api("/api/roster/full"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         ROSTER_OCCUPATION = {};
@@ -592,7 +820,7 @@
     var name = addNameInput.value.trim();
     if (!name) return;
     addNameBtn.disabled = true;
-    fetch("/api/roster", {
+    fetch(api("/api/roster"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: name })
@@ -611,7 +839,7 @@
   }
 
   function removeFromRoster(name) {
-    fetch("/api/roster/" + encodeURIComponent(name), { method: "DELETE" })
+    fetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -641,7 +869,7 @@
   var gQueue = [], gIndex = 0, gScoreVal = 0, gStreakVal = 0, gBestVal = 0, gAnswered = false, gRoundReported = false;
   var gButtonsByCode = {};
 
-  try { gBestVal = parseInt(localStorage.getItem("binDutyBestStreak") || "0", 10) || 0; } catch (e) { gBestVal = 0; }
+  try { gBestVal = parseInt(localStorage.getItem(houseKey("binDutyBestStreak")) || "0", 10) || 0; } catch (e) { gBestVal = 0; }
   gBest.textContent = gBestVal;
 
   function shuffle(arr) {
@@ -690,7 +918,7 @@
       gFeedbackEl.textContent = gScoreVal === gQueue.length ? tr("perfectRound") : tr("solidRound");
       if (gScoreVal === gQueue.length && ME && !gRoundReported) {
         gRoundReported = true;
-        fetch("/api/quiz/complete", {
+        fetch(api("/api/quiz/complete"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: ME, correct: gScoreVal, total: gQueue.length })
@@ -723,7 +951,7 @@
       gScoreVal++; gStreakVal++;
       if (gStreakVal > gBestVal) {
         gBestVal = gStreakVal; gBest.textContent = gBestVal;
-        try { localStorage.setItem("binDutyBestStreak", String(gBestVal)); } catch (e) {}
+        try { localStorage.setItem(houseKey("binDutyBestStreak"), String(gBestVal)); } catch (e) {}
         if (statStreak) statStreak.textContent = gBestVal;
       }
       btn.classList.add("pick-correct");
@@ -774,6 +1002,18 @@
     if (!vn.dataset.custom) vn.textContent = fmt("verifyPrefix", {}) + " " + fmtLong(today);
   }
 
+  // ---- "worth knowing" tip on the Full Calendar section: a different one
+  // each week, same week clock as the duty rotation, so it's identical for
+  // everyone in the house at any given moment and just moves on Monday. ----
+  function renderStakes() {
+    var stories = tr("stakesStories");
+    if (!stories || !stories.length) return;
+    var idx = ((weeksSinceAnchor(today) % stories.length) + stories.length) % stories.length;
+    var story = stories[idx];
+    document.getElementById("stakesStrong").textContent = story.strong;
+    document.getElementById("stakesRest").textContent = story.rest;
+  }
+
   // ---- legend ----
   function renderLegend() {
     var row = document.getElementById("legendRow");
@@ -794,6 +1034,25 @@
   var MONTHS = [
     { y: 2026, m: 8 }, { y: 2026, m: 9 }, { y: 2026, m: 10 }, { y: 2026, m: 11 }
   ];
+  // date_key -> {codes, out_by, out_at, back_by, back_at, hasOutPhoto,
+  // hasBackPhoto} for every task ever started, so the full calendar can
+  // show who actually marked a collection out/back — not just whose
+  // rotation turn it theoretically was — and whether proof photos exist.
+  var TASK_HISTORY = {};
+  function loadTaskHistory() {
+    // Returns the promise — callers that render the "next collection"
+    // fallback (which reads TASK_HISTORY) sequence themselves after this,
+    // so that check never runs against stale/empty history.
+    return fetch(api("/api/tasks/history"))
+      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+      .then(function (rows) {
+        TASK_HISTORY = {};
+        rows.forEach(function (r) { TASK_HISTORY[r.date_key] = r; });
+        renderCalendar();
+      })
+      .catch(function () {});
+  }
+
   function renderCalendar() {
     var container = document.getElementById("calendarMonths");
     container.innerHTML = "";
@@ -834,8 +1093,10 @@
             var thisDate = new Date(mo.y, mo.m, dayNum);
             var codes2 = codesFor(thisDate);
             var isToday = thisDate.toDateString() === today.toDateString();
+            var hist = TASK_HISTORY[dateKeyOf(thisDate)];
+            var hasPhotos = !!(hist && (hist.hasOutPhoto || hist.hasBackPhoto));
             var cellDiv = document.createElement("div");
-            cellDiv.className = "cal-cell" + (codes2 && codes2 !== "HOLIDAY" ? " has-data" : "") + (codes2 === "HOLIDAY" ? " holiday" : "");
+            cellDiv.className = "cal-cell" + (codes2 && codes2 !== "HOLIDAY" ? " has-data" : "") + (codes2 === "HOLIDAY" ? " holiday" : "") + (hasPhotos ? " has-photos" : "");
             if (isToday) cellDiv.style.outline = "1.5px solid var(--accent)";
             var dotsMarkup = "";
             if (codes2 && codes2 !== "HOLIDAY") {
@@ -843,9 +1104,26 @@
                 return BIN_COLOR[cc] ? '<span class="dot" style="background:' + BIN_COLOR[cc] + '"></span>' : "";
               }).join("");
             }
+            // Who actually marked it out — not just whose rotation turn it
+            // theoretically was — shown right on the day, plus a camera
+            // glyph when a proof photo exists for it.
+            var whoMarkup = hist && hist.out_by
+              ? '<span class="cal-who">' + initials(hist.out_by) + '</span>' + (hasPhotos ? '<span class="cal-cam">\u{1F4F7}</span>' : "")
+              : "";
             cellDiv.innerHTML =
               '<span class="n mono">' + dayNum + '</span>' +
-              (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>');
+              (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>') +
+              whoMarkup;
+            if (hasPhotos) {
+              cellDiv.setAttribute("role", "button");
+              cellDiv.setAttribute("tabindex", "0");
+              (function (dateKey, histRow) {
+                cellDiv.addEventListener("click", function () { openTaskPhotoModal(dateKey, histRow); });
+                cellDiv.addEventListener("keydown", function (ev) {
+                  if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openTaskPhotoModal(dateKey, histRow); }
+                });
+              })(dateKeyOf(thisDate), hist);
+            }
             td.appendChild(cellDiv);
             dayNum++;
           }
@@ -859,6 +1137,42 @@
     });
   }
 
+  // ---- proof-photo viewer for a past calendar day ----
+  var photoModalEl = document.getElementById("taskPhotoModal");
+  var photoModalTitle = document.getElementById("photoModalTitle");
+  var photoModalGrid = document.getElementById("photoModalGrid");
+  function openTaskPhotoModal(dateKey, hist) {
+    photoModalTitle.textContent = fmtLong(new Date(dateKey + "T00:00:00"));
+    photoModalGrid.innerHTML = "";
+    [
+      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, captionKey: "photoModalOutCaption" },
+      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, captionKey: "photoModalBackCaption" }
+    ].forEach(function (entry) {
+      if (!entry.has) return;
+      var fig = document.createElement("figure");
+      fig.className = "photo-modal-fig";
+      var img = document.createElement("img");
+      img.src = api("/api/tasks/" + dateKey + "/photo/" + entry.which);
+      img.alt = tr(entry.captionKey);
+      img.loading = "lazy";
+      fig.appendChild(img);
+      var cap = document.createElement("figcaption");
+      cap.textContent = tr(entry.captionKey) + (entry.who ? " — " + entry.who : "");
+      fig.appendChild(cap);
+      photoModalGrid.appendChild(fig);
+    });
+    photoModalEl.hidden = false;
+  }
+  function closeTaskPhotoModal() {
+    photoModalEl.hidden = true;
+    photoModalGrid.innerHTML = "";
+  }
+  document.getElementById("photoModalClose").addEventListener("click", closeTaskPhotoModal);
+  document.getElementById("photoModalBackdrop").addEventListener("click", closeTaskPhotoModal);
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !photoModalEl.hidden) closeTaskPhotoModal();
+  });
+
   // ---- bin duty task: two-step out/back confirmation + leaderboard ----
   var taskDateLabel = document.getElementById("taskDateLabel");
   var taskBadges = document.getElementById("taskBadges");
@@ -871,6 +1185,46 @@
   var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
   var currentTask = null;
+  var lastRenderedTaskKey = null;
+
+  // ---- optional proof photo on out/back: a small attach control that
+  // previews the chosen image locally (an object URL — nothing is
+  // uploaded until the Mark-out/Confirm-back button is pressed) and
+  // resets itself whenever the underlying task changes. ----
+  function makePhotoAttach(prefix) {
+    var attachEl = document.getElementById(prefix + "PhotoAttach");
+    var input = document.getElementById(prefix + "PhotoInput");
+    var thumb = document.getElementById(prefix + "PhotoThumb");
+    var clearBtn = document.getElementById(prefix + "PhotoClear");
+    var file = null;
+
+    function reset() {
+      file = null;
+      input.value = "";
+      if (thumb.src) URL.revokeObjectURL(thumb.src);
+      thumb.removeAttribute("src");
+      thumb.hidden = true;
+      clearBtn.hidden = true;
+    }
+    input.addEventListener("change", function () {
+      var f = input.files && input.files[0];
+      if (!f) return;
+      file = f;
+      if (thumb.src) URL.revokeObjectURL(thumb.src);
+      thumb.src = URL.createObjectURL(f);
+      thumb.hidden = false;
+      clearBtn.hidden = false;
+    });
+    clearBtn.addEventListener("click", function (ev) { ev.preventDefault(); reset(); });
+
+    return {
+      getFile: function () { return file; },
+      reset: reset,
+      setHidden: function (h) { attachEl.hidden = h; }
+    };
+  }
+  var outPhoto = makePhotoAttach("out");
+  var backPhoto = makePhotoAttach("back");
 
   function fillNameSelect(select, preferredName) {
     var current = select.value;
@@ -883,6 +1237,7 @@
     });
     var fallback = preferredName && ROSTER.includes(preferredName) ? preferredName : ROSTER[0];
     select.value = current && ROSTER.includes(current) ? current : fallback;
+    syncSelectTrigger(select);
   }
 
   function renderTaskForm() {
@@ -892,6 +1247,16 @@
 
   function renderTask(task) {
     currentTask = task;
+    // A picked-but-not-yet-submitted photo belongs to one specific task; if
+    // the underlying task changed (a new day opened, or the current one
+    // finished and something else took its place) any pending photo is
+    // stale and gets dropped rather than silently attached to the wrong day.
+    var taskKey = task ? task.date_key : null;
+    if (taskKey !== lastRenderedTaskKey) {
+      outPhoto.reset();
+      backPhoto.reset();
+      lastRenderedTaskKey = taskKey;
+    }
     var homeDutyAvatar = document.getElementById("homeDutyAvatar");
     var homeHero = document.getElementById("homeHero");
     var reactionsRowEl = document.getElementById("reactionsRow");
@@ -904,14 +1269,24 @@
       for (var i = 1; i <= 60; i++) {
         var cand = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
         var cc = codesFor(cand);
-        if (cc && cc !== "HOLIDAY") { next = cand; nextOffset = i; break; }
+        if (!cc || cc === "HOLIDAY") continue;
+        // A date can have real collection codes and still not be "next" —
+        // its task may already be fully done (confirmed out AND back), most
+        // commonly tonight's own task, finished before the actual pickup
+        // day even arrives. TASK_HISTORY is kept fresh for exactly this
+        // check (see loadTaskHistory, sequenced before this ever renders).
+        var candHist = TASK_HISTORY[dateKeyOf(cand)];
+        if (candHist && candHist.back_at) continue;
+        next = cand; nextOffset = i; break;
       }
       backRow.hidden = true;
+      backPhoto.setHidden(true);
       reactionsRowEl.hidden = true;
       if (!next) {
         taskDateLabel.textContent = "";
         taskBadges.innerHTML = "";
         outRow.hidden = true;
+        outPhoto.setHidden(true);
         claimStatus.textContent = tr("taskNothing");
         homeDutyAvatar.hidden = true;
         homeHero.classList.add("no-task");
@@ -932,6 +1307,8 @@
       claimStatus.appendChild(document.createTextNode(upParts[1] || ""));
       var opens = new Date(next.getFullYear(), next.getMonth(), next.getDate() - 1);
       outRow.hidden = false;
+      // Not open yet, so no photo attach either — nothing to confirm.
+      outPhoto.setHidden(true);
       outNameSelect.hidden = true;
       outBtn.disabled = true;
       outBtn.textContent = fmt("opensLater", { date: fmtShort(opens) + " " + opens.getDate() });
@@ -964,7 +1341,9 @@
 
     if (!task.out_at) {
       outRow.hidden = false;
+      outPhoto.setHidden(false);
       backRow.hidden = true;
+      backPhoto.setHidden(true);
       claimStatus.innerHTML = "";
       var parts = fmt("dutyTonight", { name: dutyPerson }).split(dutyPerson);
       claimStatus.appendChild(document.createTextNode(parts[0]));
@@ -986,21 +1365,23 @@
       }
     } else {
       outRow.hidden = true;
+      outPhoto.setHidden(true);
       backRow.hidden = false;
+      backPhoto.setHidden(false);
       if (!meOnRoster) fillNameSelect(backNameSelect, task.out_by);
       claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
     }
   }
 
   function loadTask() {
-    return fetch("/api/tasks/current")
+    return fetch(api("/api/tasks/current"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(renderTask)
       .catch(function () { claimStatus.textContent = tr("taskFailed"); });
   }
 
   function loadLeaderboard() {
-    return fetch("/api/tasks/leaderboard")
+    return fetch(api("/api/tasks/leaderboard"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         var tally = {};
@@ -1080,16 +1461,28 @@
     if (!currentTask) return;
     outBtn.disabled = true;
     claimStatus.textContent = tr("outLogging");
-    fetch("/api/tasks/" + currentTask.date_key + "/out", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: outNameSelect.value })
-    })
+    var form = new FormData();
+    form.append("name", outNameSelect.value);
+    var outFile = outPhoto.getFile();
+    if (outFile) form.append("photo", outFile);
+    // No content-type header — fetch sets the multipart boundary itself
+    // from the FormData body; setting it manually breaks the upload.
+    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
-      .then(renderTask)
+      .then(function (task) {
+        // Consumed — the date_key doesn't change here (still the same
+        // task, now marked out), so renderTask's own key-change reset
+        // wouldn't catch this; clear it explicitly.
+        outPhoto.reset();
+        renderTask(task);
+        if (task.photoBonus) celebrate(task.out_by, task.photoBonus);
+        celebrateAchievements(task.unlocked);
+        if (task.photoBonus) loadLeaderboard();
+        loadTaskHistory();
+      })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
       .finally(function () { outBtn.disabled = false; });
   });
@@ -1098,27 +1491,32 @@
     if (!currentTask) return;
     backBtn.disabled = true;
     claimStatus.textContent = tr("backLogging");
-    fetch("/api/tasks/" + currentTask.date_key + "/back", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: backNameSelect.value })
-    })
+    var form = new FormData();
+    form.append("name", backNameSelect.value);
+    var backFile = backPhoto.getFile();
+    if (backFile) form.append("photo", backFile);
+    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
       .then(function (task) {
-        celebrate(task.out_by, task.coins);
+        backPhoto.reset();
+        celebrate(task.out_by, task.coins + (task.photoBonus || 0));
         celebrateAchievements(task.unlocked);
         loadLeaderboard();
-        return loadTask();
+        // History has to be fresh before loadTask re-renders — the "no
+        // task open, show next" fallback reads TASK_HISTORY to skip a day
+        // that's already done (most often tonight's own task, just
+        // finished), so it can't run against a stale/empty history.
+        return loadTaskHistory().then(loadTask);
       })
       .catch(function () { claimStatus.textContent = tr("taskFailed"); })
       .finally(function () { backBtn.disabled = false; });
   });
 
   claimStatus.textContent = tr("taskLoading");
-  loadTask();
+  loadTaskHistory().then(loadTask); // history first — see the note in backBtn's handler
   loadLeaderboard();
 
   // ---- email notification subscriptions ----
@@ -1149,11 +1547,12 @@
       notifyLangSelect.appendChild(opt);
     });
     notifyLangSelect.value = currentSubLang || currentLang;
+    syncSelectTrigger(notifyLangSelect);
   }
 
   // Who's subscribed (names only) — drives the dot on roster avatars.
   function loadSubscribers() {
-    fetch("/api/subscribe")
+    fetch(api("/api/subscribe"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         subscribedNames = {};
@@ -1176,7 +1575,7 @@
       subscribeForm.hidden = false;
       return;
     }
-    fetch("/api/subscribe/status/" + encodeURIComponent(ME))
+    fetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (s) {
         subscribedState.hidden = !s.subscribed;
@@ -1194,7 +1593,7 @@
     if (!ME) { renderNotifyForm(); return; }
     notifySubscribeBtn.disabled = true;
     notifyStatus.textContent = tr("notifySubscribing");
-    fetch("/api/subscribe", {
+    fetch(api("/api/subscribe"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1218,7 +1617,7 @@
   unsubBtn.addEventListener("click", function () {
     if (!ME) return;
     unsubBtn.disabled = true;
-    fetch("/api/subscribe/by-name/" + encodeURIComponent(ME), { method: "DELETE" })
+    fetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
       .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
       .then(function () {
         notifyStatus.textContent = tr("unsubDone");
@@ -1229,12 +1628,248 @@
       .finally(function () { unsubBtn.disabled = false; });
   });
 
-  // ---- "You": who am I, my occupation, my achievements ----
+  // ---- houses: build one, join one with a code/link, list the ones this
+  // device has been to. Same philosophy as everything else here — no
+  // accounts, nothing server-side tracks "your" houses, it's purely what's
+  // saved in this browser (MY_HOUSES / rememberHouse, defined up top).
+  //
+  // One factory, two instances: the You tab's card (used while already
+  // inside a house, to see/switch/add more) and the landing page (used
+  // with no house at all — the only two ways in from there are build or
+  // join, there's nothing "current" to show). ----
+  function initHousesWidget(ids) {
+    var listEl = document.getElementById(ids.list);
+    var buildToggleBtn = document.getElementById(ids.buildToggle);
+    var joinToggleBtn = document.getElementById(ids.joinToggle);
+    var buildForm = document.getElementById(ids.buildForm);
+    var joinForm = document.getElementById(ids.joinForm);
+    var buildName = document.getElementById(ids.buildName);
+    var buildCity = document.getElementById(ids.buildCity);
+    var buildSubmitBtn = document.getElementById(ids.buildSubmit);
+    var buildStatus = document.getElementById(ids.buildStatus);
+    var joinInput = document.getElementById(ids.joinInput);
+    var joinSubmitBtn = document.getElementById(ids.joinSubmit);
+    var joinStatus = document.getElementById(ids.joinStatus);
+
+    function render() {
+      listEl.innerHTML = "";
+      if (!MY_HOUSES.length) {
+        var empty = document.createElement("div");
+        empty.className = "houses-empty";
+        empty.textContent = tr("housesEmpty");
+        listEl.appendChild(empty);
+        return;
+      }
+      MY_HOUSES.forEach(function (h) {
+        var row = document.createElement("div");
+        row.className = "house-row" + (h.slug === HOUSE_SLUG ? " current" : "");
+
+        var icon = document.createElement("div");
+        icon.className = "house-row-icon";
+        icon.textContent = "\u{1F3E0}";
+        row.appendChild(icon);
+
+        var text = document.createElement("div");
+        text.className = "house-row-text";
+        var name = document.createElement("div");
+        name.className = "house-row-name";
+        name.textContent = h.name;
+        text.appendChild(name);
+        var sub = document.createElement("div");
+        sub.className = "house-row-sub";
+        sub.textContent = h.slug === HOUSE_SLUG ? tr("housesCurrentTag") : tr("housesSwitchHint");
+        text.appendChild(sub);
+        row.appendChild(text);
+
+        var copyBtn = document.createElement("button");
+        copyBtn.className = "house-row-copy";
+        copyBtn.type = "button";
+        copyBtn.textContent = tr("housesCopyLink");
+        copyBtn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var link = houseLink(h.slug);
+          var mark = function () {
+            copyBtn.textContent = tr("housesCopied");
+            copyBtn.classList.add("copied");
+            setTimeout(function () {
+              copyBtn.textContent = tr("housesCopyLink");
+              copyBtn.classList.remove("copied");
+            }, 1800);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(mark).catch(function () { window.prompt(tr("housesCopyManual"), link); });
+          } else {
+            window.prompt(tr("housesCopyManual"), link);
+          }
+        });
+        row.appendChild(copyBtn);
+
+        if (h.slug !== HOUSE_SLUG) {
+          row.style.cursor = "pointer";
+          row.addEventListener("click", function () { location.href = houseLink(h.slug); });
+        }
+
+        listEl.appendChild(row);
+      });
+    }
+
+    function closeForms() {
+      buildForm.hidden = true;
+      joinForm.hidden = true;
+      buildStatus.textContent = "";
+      joinStatus.textContent = "";
+    }
+
+    buildToggleBtn.addEventListener("click", function () {
+      var opening = buildForm.hidden;
+      closeForms();
+      buildForm.hidden = !opening;
+      if (opening) buildName.focus();
+    });
+    joinToggleBtn.addEventListener("click", function () {
+      var opening = joinForm.hidden;
+      closeForms();
+      joinForm.hidden = !opening;
+      if (opening) joinInput.focus();
+    });
+
+    buildSubmitBtn.addEventListener("click", function () {
+      var name = buildName.value.trim();
+      if (!name) { buildStatus.textContent = tr("buildHouseNameRequired"); return; }
+      buildSubmitBtn.disabled = true;
+      buildStatus.textContent = tr("buildHouseBuilding");
+      fetch("/api/houses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name, city: buildCity.value.trim(), language: currentLang })
+      })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+          return r.json();
+        })
+        .then(function (house) {
+          rememberHouse(house.slug, house.name);
+          if (house.ownerToken) setOwnerToken(house.slug, house.ownerToken);
+          location.href = houseLink(house.slug);
+        })
+        .catch(function (e) {
+          buildStatus.textContent = e.message || tr("buildHouseFailed");
+          buildSubmitBtn.disabled = false;
+        });
+    });
+
+    joinSubmitBtn.addEventListener("click", function () {
+      // A slug and the human-facing "code" are the same string — see
+      // houses.js — so whatever someone pastes (a bare code or a full
+      // ?h=... link) just needs the slug picked out of it.
+      var raw = joinInput.value.trim();
+      var slug = raw;
+      try {
+        if (/^https?:\/\//i.test(raw)) {
+          slug = new URL(raw).searchParams.get("h") || raw;
+        }
+      } catch (e) {}
+      slug = slug.toLowerCase().replace(/\s+/g, "");
+      if (!slug) { joinStatus.textContent = tr("joinHouseEmpty"); return; }
+      joinSubmitBtn.disabled = true;
+      joinStatus.textContent = tr("joinHouseChecking");
+      fetch("/api/houses/" + encodeURIComponent(slug))
+        .then(function (r) {
+          if (!r.ok) throw new Error(tr("joinHouseNotFound"));
+          return r.json();
+        })
+        .then(function (house) {
+          rememberHouse(house.slug, house.name);
+          location.href = houseLink(house.slug);
+        })
+        .catch(function (e) {
+          joinStatus.textContent = e.message || tr("joinHouseNotFound");
+          joinSubmitBtn.disabled = false;
+        });
+    });
+
+    return { render: render };
+  }
+
+  var housesWidget = initHousesWidget({
+    list: "housesList", buildToggle: "buildHouseToggleBtn", joinToggle: "joinHouseToggleBtn",
+    buildForm: "buildHouseForm", joinForm: "joinHouseForm", buildName: "buildHouseName",
+    buildCity: "buildHouseCity", buildSubmit: "buildHouseSubmitBtn", buildStatus: "buildHouseStatus",
+    joinInput: "joinHouseInput", joinSubmit: "joinHouseSubmitBtn", joinStatus: "joinHouseStatus"
+  });
+  function renderHousesList() { housesWidget.render(); }
+
+  // ---- destroy this house: only on the browser that built it (holds its
+  // owner key). Two steps, and the house name has to be typed to confirm,
+  // since it wipes the house for everyone and can't be undone. ----
+  var HOUSE_NAME = "";
+  var destroyBox = document.getElementById("destroyHouseBox");
+  var destroyToggleBtn = document.getElementById("destroyToggleBtn");
+  var destroyConfirm = document.getElementById("destroyConfirm");
+  var destroyWarning = document.getElementById("destroyWarning");
+  var destroyNameInput = document.getElementById("destroyNameInput");
+  var destroySubmitBtn = document.getElementById("destroySubmitBtn");
+  var destroyStatus = document.getElementById("destroyStatus");
+
+  function renderDestroyBox() {
+    var token = HOUSE_SLUG ? getOwnerTokens()[HOUSE_SLUG] : null;
+    destroyBox.hidden = !(token && HOUSE_NAME);
+    if (destroyBox.hidden) return;
+    destroyWarning.innerHTML = "";
+    var parts = fmt("destroyHouseWarning", { name: "\u0000" }).split("\u0000");
+    destroyWarning.appendChild(document.createTextNode(parts[0]));
+    var strong = document.createElement("strong");
+    strong.textContent = HOUSE_NAME;
+    destroyWarning.appendChild(strong);
+    destroyWarning.appendChild(document.createTextNode(parts[1] || ""));
+  }
+  destroyToggleBtn.addEventListener("click", function () {
+    destroyConfirm.hidden = !destroyConfirm.hidden;
+    destroyNameInput.value = "";
+    destroySubmitBtn.disabled = true;
+    destroyStatus.textContent = "";
+    if (!destroyConfirm.hidden) destroyNameInput.focus();
+  });
+  destroyNameInput.addEventListener("input", function () {
+    destroySubmitBtn.disabled = destroyNameInput.value.trim() !== HOUSE_NAME.trim();
+  });
+  destroySubmitBtn.addEventListener("click", function () {
+    var token = getOwnerTokens()[HOUSE_SLUG];
+    if (!token || destroyNameInput.value.trim() !== HOUSE_NAME.trim()) return;
+    destroySubmitBtn.disabled = true;
+    destroyStatus.textContent = tr("destroyHouseDestroying");
+    fetch("/api/houses/" + encodeURIComponent(HOUSE_SLUG), {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ownerToken: token })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        forgetHouse(HOUSE_SLUG);
+        location.href = location.pathname; // back to the landing page
+      })
+      .catch(function (e) {
+        destroyStatus.textContent = e.message || tr("destroyHouseFailed");
+        destroySubmitBtn.disabled = false;
+      });
+  });
+
+  // The landing page's own instance — same widget, different DOM, shown
+  // full-page (see startApp/landing bootstrap below) when no house is
+  // selected at all.
+  var landingHousesWidget = initHousesWidget({
+    list: "landingHousesList", buildToggle: "landingBuildToggleBtn", joinToggle: "landingJoinToggleBtn",
+    buildForm: "landingBuildForm", joinForm: "landingJoinForm", buildName: "landingBuildName",
+    buildCity: "landingBuildCity", buildSubmit: "landingBuildSubmitBtn", buildStatus: "landingBuildStatus",
+    joinInput: "landingJoinInput", joinSubmit: "landingJoinSubmitBtn", joinStatus: "landingJoinStatus"
+  });
+
+  // ---- "You": who am I, my achievements ----
   var meSelect = document.getElementById("meSelect");
   var meStatus = document.getElementById("meStatus");
-  var occupationRow = document.getElementById("occupationRow");
-  var occupationInput = document.getElementById("occupationInput");
-  var occupationSaveBtn = document.getElementById("occupationSaveBtn");
 
   function renderMeSelect() {
     var current = ME;
@@ -1251,8 +1886,7 @@
     });
     meSelect.value = current && ROSTER.includes(current) ? current : "";
     if (meSelect.value !== current) setMe(meSelect.value);
-    occupationRow.hidden = !ME;
-    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
+    syncSelectTrigger(meSelect);
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
   }
@@ -1304,16 +1938,11 @@
       ? (tr("profileSincePrefix") + " " + tr("months")[sinceDate.getMonth()] + " " + sinceDate.getFullYear())
       : (ROSTER_OCCUPATION[ME] || "");
     statStreak.textContent = gBestVal;
-    // Occupation arrives with /api/roster/full, usually after the first
-    // render — fill the field once it's known, but never over a draft.
-    if (!occupationInput.value && ROSTER_OCCUPATION[ME]) occupationInput.value = ROSTER_OCCUPATION[ME];
   }
 
   meSelect.addEventListener("change", function () {
     setMe(meSelect.value);
     profileEditOpen = false; // picking a name collapses the panel
-    occupationRow.hidden = !ME;
-    occupationInput.value = ME ? (ROSTER_OCCUPATION[ME] || "") : "";
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
     renderDonateSelect();
@@ -1323,26 +1952,6 @@
     renderTask(currentTask);
     renderNotifyForm();
     loadMySubscription();
-  });
-
-  occupationSaveBtn.addEventListener("click", function () {
-    if (!ME) return;
-    occupationSaveBtn.disabled = true;
-    fetch("/api/roster/" + encodeURIComponent(ME), {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ occupation: occupationInput.value.trim() })
-    })
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
-        return r.json();
-      })
-      .then(function () {
-        meStatus.textContent = tr("occupationSaved");
-        loadRosterFull();
-      })
-      .catch(function (e) { meStatus.textContent = e.message || tr("occupationFailed"); })
-      .finally(function () { occupationSaveBtn.disabled = false; });
   });
 
   // ---- achievements ----
@@ -1370,20 +1979,15 @@
   var balanceNum = document.getElementById("balanceNum");
 
   function loadAchievements() {
-    var homeCoinsLabel = document.getElementById("homeCoinsLabel");
-    var homeCoinsAvatar = document.getElementById("homeCoinsAvatar");
     if (!ME) {
       achvGrid.innerHTML = "";
       achvUnlockedMsg.textContent = tr("meNotPickedForAchievements");
       achvUnlockedMsg.classList.add("muted");
       balanceNum.textContent = "—";
-      homeCoinsLabel.textContent = tr("homeCoinsPrompt");
-      homeCoinsAvatar.classList.remove("on");
       return;
     }
     achvUnlockedMsg.textContent = "";
-    homeCoinsAvatar.classList.add("on");
-    fetch("/api/coins/" + encodeURIComponent(ME))
+    fetch(api("/api/coins/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         renderAchievements(data.achievements);
@@ -1397,7 +2001,6 @@
         balanceNum.textContent = data.balance;
         statCoins.textContent = data.balance;
         statTurns.textContent = data.turnsTaken;
-        homeCoinsLabel.textContent = fmt("scrapCoinsCount", { n: data.balance });
       })
       .catch(function () {});
   }
@@ -1436,6 +2039,7 @@
       donateToSelect.appendChild(opt);
     });
     donateToSelect.value = current || (donateToSelect.options[0] && donateToSelect.options[0].value) || "";
+    syncSelectTrigger(donateToSelect);
     donateBtn.disabled = !ME;
     donateStatus.textContent = ME ? "" : tr("meNotPickedForDonate");
   }
@@ -1449,7 +2053,7 @@
     }
     donateBtn.disabled = true;
     donateStatus.textContent = tr("donateSending");
-    fetch("/api/coins/donate", {
+    fetch(api("/api/coins/donate"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from: ME, to: donateToSelect.value, amount: amount })
@@ -1496,7 +2100,7 @@
     // No live task → the row is hidden, nothing to fetch (renderTask calls
     // this again once a task is shown).
     if (!currentTask) return;
-    fetch("/api/reactions/" + reactionDateKey())
+    fetch(api("/api/reactions/" + reactionDateKey()))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         var mine = null;
@@ -1505,20 +2109,20 @@
         renderReactionCounts(data.counts, mine);
       })
       .catch(function () {});
-    reactionHintEl.textContent = ME ? tr("donateHeading") : tr("reactionHint");
-    reactionHintEl.classList.toggle("donate", !!ME);
+    // Always the donate prompt now, whether or not a name is picked yet —
+    // clicking it jumps to Rewards, which itself asks for a name first if
+    // one isn't set (see meNotPickedForDonate).
+    reactionHintEl.textContent = tr("donateHeading");
+    reactionHintEl.classList.add("donate");
   }
   reactionHintEl.addEventListener("click", function () {
-    if (ME) showView("rewards");
+    showView("rewards");
   });
 
   Object.keys(reactButtons).forEach(function (emoji) {
     reactButtons[emoji].addEventListener("click", function () {
-      if (!ME) {
-        reactionHintEl.textContent = tr("reactionHint");
-        return;
-      }
-      fetch("/api/reactions/" + reactionDateKey(), {
+      if (!ME) return;
+      fetch(api("/api/reactions/" + reactionDateKey()), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: ME, emoji: emoji })
@@ -1643,7 +2247,7 @@
         if (!addr) return;
         emailBtn.disabled = true;
         emailStatus.textContent = tr("scanEmailSending");
-        fetch("/api/check/email", {
+        fetch(api("/api/check/email"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
@@ -1684,7 +2288,7 @@
       formData.append("photo", file);
       if (ME) formData.append("name", ME);
 
-      fetch("/api/check", { method: "POST", body: formData })
+      fetch(api("/api/check"), { method: "POST", body: formData })
         .then(function (r) {
           if (r.status === 413) throw { code: "TOO_LARGE" };
           if (!r.ok) {
@@ -1715,25 +2319,79 @@
   })();
 
   // ---- bootstrap: load the roster + schedule, then render everything that depends on them ----
-  var scheduleLoadFailed = false;
-  Promise.all([
-    fetch("/api/roster").then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
-    fetch("/api/schedule")
-      .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-      .catch(function () { scheduleLoadFailed = true; return {}; })
-  ])
-    .then(function (results) {
-      ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
-      SCHEDULE = results[1];
-      recomputeWeek();
-      if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
-      applyLang();
-      loadRosterFull();
-    })
-    .catch(function () {
-      ROSTER = ["Housemate"];
-      recomputeWeek();
-      rosterMsg.textContent = "Couldn't load the housemate list from the server.";
-      applyLang();
+  function startApp() {
+    var scheduleLoadFailed = false;
+    Promise.all([
+      fetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
+      fetch(api("/api/schedule"))
+        .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .catch(function () { scheduleLoadFailed = true; return {}; })
+    ])
+      .then(function (results) {
+        ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
+        SCHEDULE = results[1];
+        recomputeWeek();
+        if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
+        applyLang();
+        loadRosterFull();
+      })
+      .catch(function () {
+        ROSTER = ["Housemate"];
+        recomputeWeek();
+        rosterMsg.textContent = "Couldn't load the housemate list from the server.";
+        applyLang();
+      });
+  }
+
+  // A house link (?h=slug) has to actually exist before the rest of the app
+  // tries to use it — an old/mistyped/deleted-house link shows a plain
+  // "this house doesn't exist" page instead of a broken, empty app.
+  var houseNotFoundEl = document.getElementById("houseNotFound");
+  var houseNotFoundHomeLink = document.getElementById("houseNotFoundHomeLink");
+  if (houseNotFoundHomeLink) houseNotFoundHomeLink.href = location.pathname;
+
+  // Same trick as houseNotFound above: neither startApp() nor applyLang()
+  // ever run on this path, so this page's own [data-i18n] text needs
+  // filling directly.
+  function fillI18n(root) {
+    root.querySelectorAll("[data-i18n]").forEach(function (el) {
+      var val = tr(el.getAttribute("data-i18n"));
+      if (val != null) el.textContent = val;
     });
+    root.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+      var val = tr(el.getAttribute("data-i18n-placeholder"));
+      if (val != null) el.placeholder = val;
+    });
+  }
+
+  // No house at all — every session starts here now. Nothing loads, nothing
+  // is assumed: the only two ways forward are building a new house or
+  // opening one you already have a link/code for (including this device's
+  // own remembered houses, if any).
+  if (!HOUSE_SLUG) {
+    var landingEl = document.getElementById("landingPage");
+    fillI18n(landingEl);
+    landingHousesWidget.render();
+    landingEl.hidden = false;
+  } else {
+    fetch("/api/houses/" + encodeURIComponent(HOUSE_SLUG))
+      .then(function (r) { if (!r.ok) throw new Error("not found"); return r.json(); })
+      .then(function (house) {
+        rememberHouse(house.slug, house.name);
+        HOUSE_NAME = house.name;
+        document.title = house.name + " · Bin Duty";
+        startApp();
+      })
+      .catch(function () {
+        // Not [hidden] — #app carries a class (.wrap) that sets its own
+        // display, same specificity as the [hidden] UA rule, so the
+        // attribute alone wouldn't actually hide it.
+        var appEl = document.getElementById("app");
+        if (appEl) appEl.style.display = "none";
+        var hazardTop = document.querySelector(".hazard-bar.hazard-top");
+        if (hazardTop) hazardTop.style.display = "none";
+        fillI18n(houseNotFoundEl);
+        houseNotFoundEl.hidden = false;
+      });
+  }
 })();
