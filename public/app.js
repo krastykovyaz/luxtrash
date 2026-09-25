@@ -1272,6 +1272,42 @@
     return chars.join("");
   }
 
+  // A picked-but-unsubmitted photo has to survive a page reload: the "back"
+  // photo in particular is often picked hours after "out" was confirmed
+  // (someone has to go back outside once the bin's actually been emptied),
+  // long enough for iOS Safari to silently discard and reload the tab in
+  // the background — no beforeunload warning fires for that, the in-memory
+  // File is just gone, and the person never notices their photo wasn't
+  // attached anymore. Stash every picked photo in IndexedDB immediately and
+  // restore it on the next render of that same task/step so it's never
+  // silently lost between picking it and pressing confirm.
+  var pendingDbPromise = null;
+  function pendingDb() {
+    if (!pendingDbPromise) {
+      pendingDbPromise = new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(new Error("no indexedDB")); return; }
+        var req = indexedDB.open("bin-duty-pending", 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore("photos"); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+    }
+    return pendingDbPromise;
+  }
+  function withPendingStore(mode, fn) {
+    return pendingDb().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction("photos", mode);
+        var result = fn(tx.objectStore("photos"));
+        tx.oncomplete = function () { resolve(result && result.result); };
+        tx.onerror = function () { resolve(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  function savePendingPhoto(key, record) { return withPendingStore("readwrite", function (store) { return store.put(record, key); }); }
+  function loadPendingPhoto(key) { return withPendingStore("readonly", function (store) { return store.get(key); }); }
+  function deletePendingPhoto(key) { return withPendingStore("readwrite", function (store) { return store.delete(key); }); }
+
   function makePhotoAttach(prefix) {
     var attachEl = document.getElementById(prefix + "PhotoAttach");
     var input = document.getElementById(prefix + "PhotoInput");
@@ -1280,8 +1316,11 @@
     var metaEl = document.getElementById(prefix + "PhotoMeta");
     var file = null;
     var takenAt = null; // Date, or null when unknown
+    var activeKey = null; // "out:2026-09-25" style IndexedDB key for the task/step this attach currently represents
 
     function reset() {
+      if (activeKey) deletePendingPhoto(activeKey);
+      activeKey = null;
       file = null;
       takenAt = null;
       input.value = "";
@@ -1300,6 +1339,26 @@
       metaEl.classList.toggle("warn", !sameDay);
       metaEl.hidden = false;
     }
+    // Called every time this attach becomes the active step for a task
+    // (out photo when out isn't confirmed yet, back photo once it is). If
+    // nothing's picked in this session yet, checks IndexedDB for a photo
+    // that was picked before an in-between reload wiped this session's JS
+    // state, and silently restores it so the person never has to notice.
+    function forTask(dateKey) {
+      var key = dateKey ? prefix + ":" + dateKey : null;
+      activeKey = key;
+      if (!key || file) return;
+      loadPendingPhoto(key).then(function (record) {
+        if (!record || activeKey !== key || file) return; // stale response, or the person already picked something since
+        file = record.blob;
+        takenAt = record.takenAt ? new Date(record.takenAt) : null;
+        if (thumb.src) URL.revokeObjectURL(thumb.src);
+        thumb.src = URL.createObjectURL(record.blob);
+        thumb.hidden = false;
+        clearBtn.hidden = false;
+        renderMeta(takenAt, !!record.fromExif);
+      });
+    }
     input.addEventListener("change", function () {
       var f = input.files && input.files[0];
       if (!f) return;
@@ -1310,10 +1369,12 @@
       thumb.hidden = false;
       clearBtn.hidden = false;
       metaEl.hidden = true;
+      if (activeKey) savePendingPhoto(activeKey, { blob: f, takenAt: null, fromExif: false });
       readExifDate(f).then(function (exifDate) {
         if (file !== f) return; // a different file was picked while this was reading
         takenAt = exifDate || (f.lastModified ? new Date(f.lastModified) : null);
         renderMeta(takenAt, !!exifDate);
+        if (activeKey) savePendingPhoto(activeKey, { blob: f, takenAt: takenAt ? takenAt.toISOString() : null, fromExif: !!exifDate });
       });
     });
     clearBtn.addEventListener("click", function (ev) { ev.preventDefault(); reset(); });
@@ -1322,6 +1383,7 @@
       getFile: function () { return file; },
       getTakenAt: function () { return takenAt; },
       reset: reset,
+      forTask: forTask,
       setHidden: function (h) { attachEl.hidden = h; }
     };
   }
@@ -1453,6 +1515,7 @@
     if (!task.out_at) {
       outRow.hidden = false;
       outPhoto.setHidden(false);
+      outPhoto.forTask(task.date_key);
       backRow.hidden = true;
       backPhoto.setHidden(true);
       claimStatus.innerHTML = "";
@@ -1479,6 +1542,7 @@
       outPhoto.setHidden(true);
       backRow.hidden = false;
       backPhoto.setHidden(false);
+      backPhoto.forTask(task.date_key);
       if (!meOnRoster) fillNameSelect(backNameSelect, task.out_by);
       claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
     }
