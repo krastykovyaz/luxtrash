@@ -19,9 +19,9 @@ const cron = require("node-cron");
 const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
-const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const { LANGS, t } = require("./i18n");
-const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -730,6 +730,35 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
     // a background job, not a request handler.
     console.error("Reminder run threw:", err.message);
   }
+});
+
+// "Still not out" follow-up: if nobody's confirmed the bins out a few hours
+// after the evening reminder, nudge again — up to twice, 3 hours apart
+// (21:00 and 00:00, following the fixed 18:00 opening time every task
+// already uses). Stops the moment someone confirms out, photo or not; the
+// nudge itself is about getting the bins out, the photo bonus is just the
+// extra incentive worth repeating. Same original-house-only scope as the
+// reminder cron above.
+async function runOutFollowUp() {
+  try {
+    const task = getCurrentTask(defaultDb, new Date(), DEFAULT_FLAT_SCHEDULE);
+    if (!task || task.out_at || task.out_reminder_count >= 2) return;
+    const result = await sendOutFollowUp(defaultDb, currentRoster(defaultDb), originalHouse.slug, task);
+    incrementOutReminderCount(defaultDb, task.date_key, task.codes);
+    console.log(`Out-reminder follow-up: sent ${result.sent}, skipped ${result.skipped}` +
+      (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+  } catch (err) {
+    console.error("Out-reminder follow-up threw:", err.message);
+  }
+}
+const DEFAULT_OUT_REMINDER_CRONS = ["0 21 * * *", "0 0 * * *"];
+const OUT_REMINDER_CRONS = (process.env.OUT_REMINDER_CRONS || DEFAULT_OUT_REMINDER_CRONS.join(","))
+  .split(",").map((s) => s.trim()).filter(Boolean);
+OUT_REMINDER_CRONS.forEach((expr, i) => {
+  if (!cron.validate(expr)) {
+    console.error(`OUT_REMINDER_CRONS entry "${expr}" is not a valid cron expression — falling back to "${DEFAULT_OUT_REMINDER_CRONS[i] || DEFAULT_OUT_REMINDER_CRONS[0]}".`);
+  }
+  cron.schedule(cron.validate(expr) ? expr : (DEFAULT_OUT_REMINDER_CRONS[i] || DEFAULT_OUT_REMINDER_CRONS[0]), runOutFollowUp);
 });
 
 // End-of-week heads-up — who's on duty starting tomorrow, sent to

@@ -86,12 +86,20 @@ function getCurrentTask(db, today, flatSchedule) {
     const dateKey = dateKeyOf(date);
     if (dateKey < dateKeyOf(today)) continue; // never started and already past — let it go
     const codes = codesForFlat(date, flatSchedule);
-    const row = getTaskRow(db, dateKey) || { date_key: dateKey, codes, out_by: null, out_at: null, back_by: null, back_at: null, coins: COINS_PER_TASK };
+    const row = getTaskRow(db, dateKey) || { date_key: dateKey, codes, out_by: null, out_at: null, back_by: null, back_at: null, coins: COINS_PER_TASK, out_reminder_count: 0 };
     if (!row.back_at) {
       return { ...row, overdue: false, started: false };
     }
   }
   return null;
+}
+
+// Bumps this task's "still not out" follow-up-reminder counter, creating
+// its row first if nothing has touched it yet (a task with no row is
+// implicitly "0 reminders sent so far").
+function incrementOutReminderCount(db, dateKey, codes) {
+  ensureTaskRow(db, dateKey, codes);
+  db.prepare("UPDATE tasks SET out_reminder_count = out_reminder_count + 1 WHERE date_key = ?").run(dateKey);
 }
 
 function confirmOut(db, dateKey, roster, name, flatSchedule) {
@@ -157,4 +165,4 @@ function getLeaderboard(db) {
   ).all();
 }
 
-module.exports = { getCurrentTask, confirmOut, confirmBack, getLeaderboard, dateKeyOf };
+module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, getLeaderboard, dateKeyOf };

@@ -50,6 +50,12 @@ function ensureSchema(db, opts) {
       db.exec("ALTER TABLE tasks ADD COLUMN " + col + " TEXT");
     }
   });
+  // How many "still not out" follow-up reminders have gone out for this
+  // task — capped at 2 (see server/index.js's outReminderCron) so someone
+  // who never confirms doesn't get emailed forever.
+  if (taskCols.indexOf("out_reminder_count") === -1) {
+    db.exec("ALTER TABLE tasks ADD COLUMN out_reminder_count INTEGER NOT NULL DEFAULT 0");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS roster (

@@ -144,6 +144,8 @@ window.T = {
     rcAlsoVal: "Bulky-item pickup on request, or a large-capacity container for a big clear-out",
     footerText: "Collections verified against vdl.lu · covers 1 September–31 December 2026",
     dutyMsgHeading: "Bin duty this week:", dutyMsgFooter: "Out the evening before, or before 6am.",
+    outReminderSubject: "Still not out —", outReminderHeading: "Still waiting",
+    outReminderBody: "{name}, the bins for {label} still aren't at the curb. Take them out and snap a before photo for +5 Scrap coins.",
     publicHolidayShort: "Public holiday, no collection",
     swapMsgIntro: "Can't do bin duty this week ({name}, week of {date}) — can someone swap with me?",
     swapMsgFooter: "Whoever can take it, just reply here and I'll owe you one.",
