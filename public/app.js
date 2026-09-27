@@ -1426,7 +1426,11 @@
   }
 
   function renderTaskForm() {
-    fillNameSelect(outNameSelect, thisWeek.name);
+    // The loaded task's own duty person, not "this calendar week" — same
+    // reasoning as renderTask's dutyPerson: on a Sunday evening the task
+    // that just opened is for Monday, next week's rotation.
+    var outDefault = currentTask ? personForWeek(new Date(currentTask.date_key + "T00:00:00")).name : thisWeek.name;
+    fillNameSelect(outNameSelect, outDefault);
     fillNameSelect(backNameSelect, currentTask && currentTask.out_by);
   }
 
@@ -1513,7 +1517,12 @@
     taskDateLabel.textContent = isTomorrow ? tr("tonightBinsLabel") : fmtLong(date);
     renderBadges(taskBadges, task.codes);
 
-    var dutyPerson = task.out_by || thisWeek.name;
+    // Whoever's turn it is for THIS task's own date — not "this calendar
+    // week" (thisWeek), which is wrong the moment the task's date falls in
+    // a different week bucket than today. That's exactly Sunday evening:
+    // today is still in this week, but the task that just opened is for
+    // Monday, next week's rotation.
+    var dutyPerson = task.out_by || personForWeek(date).name;
     homeDutyAvatar.hidden = false;
     homeDutyAvatar.textContent = initials(dutyPerson);
 
