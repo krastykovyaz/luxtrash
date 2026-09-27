@@ -20,7 +20,7 @@ const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
-const { LANGS } = require("./i18n");
+const { LANGS, t } = require("./i18n");
 const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
@@ -660,6 +660,37 @@ app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
 });
 
 // --- Static frontend ---
+const INDEX_HTML_PATH = path.join(__dirname, "..", "public", "index.html");
+
+function escapeHtmlAttr(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+}
+
+// Social apps (Telegram, WhatsApp, Facebook, iMessage, …) fetch a shared
+// link server-side and read its <meta> tags without ever running the page's
+// JS — so the client-only i18n in app.js can't localize the preview. A link
+// carries the sharer's language (see houseLink() in app.js, which appends
+// it), falling back to the house's own stored language for an older link
+// that predates this, then English.
+app.get("/", (req, res) => {
+  const slug = typeof req.query.h === "string" ? req.query.h.trim().toLowerCase() : "";
+  const house = slug ? houses.getHouse(slug) : null;
+  const queryLang = typeof req.query.lang === "string" ? req.query.lang.trim().toLowerCase() : "";
+  const lang = VALID_LANGS.has(queryLang) ? queryLang : VALID_LANGS.has(house && house.language) ? house.language : "en";
+
+  const title = house ? `${house.name} · Bin Duty` : "Bin Duty";
+  const description = t(lang, "tagline");
+  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+
+  let html = fs.readFileSync(INDEX_HTML_PATH, "utf8");
+  html = html
+    .replace(/\{\{HTML_LANG\}\}/g, escapeHtmlAttr(lang))
+    .replace(/\{\{OG_TITLE\}\}/g, escapeHtmlAttr(title))
+    .replace(/\{\{OG_DESCRIPTION\}\}/g, escapeHtmlAttr(description))
+    .replace(/\{\{OG_URL\}\}/g, escapeHtmlAttr(url));
+  res.type("html").send(html);
+});
+
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const PORT = process.env.PORT || 3000;

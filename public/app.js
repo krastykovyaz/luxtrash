@@ -96,9 +96,15 @@
     } catch (e) {}
     setOwnerToken(slug, null);
   }
+  // The lang param lets a social app's link-preview crawler (which never
+  // runs this page's JS) render its title/description in the sharer's own
+  // language instead of always English — see the "/" route in server/index.js.
   function houseLink(slug) {
     var url = new URL(location.href);
-    url.search = slug ? "?h=" + encodeURIComponent(slug) : "";
+    var params = [];
+    if (slug) params.push("h=" + encodeURIComponent(slug));
+    params.push("lang=" + encodeURIComponent(currentLang));
+    url.search = "?" + params.join("&");
     url.hash = "";
     return url.toString();
   }
@@ -143,7 +149,13 @@
   (function initLang() {
     try {
       var saved = localStorage.getItem("binDutyLang");
-      if (saved && window.T[saved]) currentLang = saved;
+      if (saved && window.T[saved]) { currentLang = saved; return; }
+      // No saved preference yet — a link shared by someone else carries
+      // their language (see houseLink()) so a first-time visitor lands in
+      // the same language the link's preview was already shown in, rather
+      // than switching to English right after opening it.
+      var fromLink = new URLSearchParams(location.search).get("lang");
+      if (fromLink && window.T[fromLink]) currentLang = fromLink;
     } catch (e) {}
   })();
 
