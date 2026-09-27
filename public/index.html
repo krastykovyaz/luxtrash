@@ -203,6 +203,27 @@
   }
   .claim-status { font-size: 13px; color: var(--ink-soft); }
 
+  /* ---- quantity stepper (replaces a number input's native up/down
+     spinner, which — like a <select> popup — no browser lets CSS reach) ---- */
+  .qty-stepper { display: flex; align-items: stretch; flex: none; background: var(--surface-2); border: 2px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .qty-btn {
+    flex: none; width: 32px; border: none; background: transparent; color: var(--ink);
+    font-family: 'Work Sans', sans-serif; font-size: 17px; font-weight: 700; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .qty-btn:first-child { border-right: 1px solid var(--line); }
+  .qty-btn:last-child { border-left: 1px solid var(--line); }
+  .qty-btn:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+  .qty-btn:active:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+  .qty-btn:disabled { color: var(--ink-faint); cursor: default; }
+  .qty-input {
+    width: 54px; min-width: 0; text-align: center; font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--ink); background: transparent; border: none; padding: 9px 2px;
+    -moz-appearance: textfield;
+  }
+  .qty-input::-webkit-outer-spin-button, .qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .qty-input:focus { outline: none; }
+
   /* ---- custom-themed dropdown (replaces every native <select> popup,
      which no browser lets CSS reach) — see enhanceSelect() in app.js ---- */
   .select-wrap { display: contents; }
@@ -845,7 +866,11 @@
     <div class="poster donate-card" id="donateCard">
       <div class="claim-row">
         <select class="claim-select" id="donateToSelect"></select>
-        <input type="number" class="claim-select" id="donateAmountInput" min="1" max="1000" step="1" style="width:90px;" data-i18n-placeholder="donateAmountPlaceholder">
+        <div class="qty-stepper">
+          <button class="qty-btn" id="donateAmountMinus" type="button" aria-label="&#8722;">&#8722;</button>
+          <input type="number" class="qty-input" id="donateAmountInput" min="1" max="1000" step="1" inputmode="numeric" data-i18n-placeholder="donateAmountPlaceholder">
+          <button class="qty-btn" id="donateAmountPlus" type="button" aria-label="+">+</button>
+        </div>
         <button class="stamp-btn" id="donateBtn" type="button" data-i18n="donateBtn"></button>
       </div>
       <div class="claim-status" id="donateStatus"></div>

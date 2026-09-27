@@ -2230,8 +2230,31 @@
   // ---- donate coins ----
   var donateToSelect = document.getElementById("donateToSelect");
   var donateAmountInput = document.getElementById("donateAmountInput");
+  var donateAmountMinus = document.getElementById("donateAmountMinus");
+  var donateAmountPlus = document.getElementById("donateAmountPlus");
   var donateBtn = document.getElementById("donateBtn");
   var donateStatus = document.getElementById("donateStatus");
+
+  // Themed +/- stand-ins for the number input's native spinner (styling
+  // that spinner directly isn't possible in any browser).
+  var donateAmountMin = Number(donateAmountInput.min) || 1;
+  var donateAmountMax = Number(donateAmountInput.max) || Infinity;
+  function syncDonateAmountBtns() {
+    var n = parseInt(donateAmountInput.value, 10);
+    donateAmountMinus.disabled = !isNaN(n) && n <= donateAmountMin;
+    donateAmountPlus.disabled = !isNaN(n) && n >= donateAmountMax;
+  }
+  function stepDonateAmount(delta) {
+    var n = parseInt(donateAmountInput.value, 10);
+    if (isNaN(n)) n = delta > 0 ? donateAmountMin : donateAmountMin + 1;
+    n = Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
+    donateAmountInput.value = n;
+    syncDonateAmountBtns();
+  }
+  donateAmountMinus.addEventListener("click", function () { stepDonateAmount(-1); });
+  donateAmountPlus.addEventListener("click", function () { stepDonateAmount(1); });
+  donateAmountInput.addEventListener("input", syncDonateAmountBtns);
+  syncDonateAmountBtns();
 
   function renderDonateSelect() {
     var current = donateToSelect.value;
