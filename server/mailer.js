@@ -5,7 +5,7 @@ const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
 let transporter = null;
 let warnedMissingConfig = false;
 
-const PUBLIC_URL = process.env.PUBLIC_URL || "https://binduty.sococoffee.com";
+const PUBLIC_URL = process.env.PUBLIC_URL || "https://binduty.unilu.space";
 
 // A friendly display name (not a bare address) and a real List-Unsubscribe
 // header are the two concrete things that actually move the needle on spam
