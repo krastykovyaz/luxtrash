@@ -681,15 +681,24 @@
 
   /* ---- donate / me picker ---- */
   #meCard .claim-row, #donateCard .claim-row { align-items: center; }
-  /* Two tidy rows on a shared 40px height and 6px corner: who to give to on
-     top (full width, so no name is ever truncated), then the amount stepper
-     and GIVE side by side beneath it. Capped so it doesn't sprawl on a wide
-     card. */
-  #donateCard .claim-row { gap: 8px; max-width: 420px; }
-  #donateCard .select-trigger { flex: 1 1 100%; min-width: 0; height: 40px; padding-block: 0; }
-  #donateCard .qty-stepper { flex: 1 1 0; min-width: 0; height: 40px; }
-  #donateCard .qty-input { flex: 1 1 0; width: auto; }
-  #donateCard #donateBtn { flex: none; height: 40px; min-width: 88px; padding: 0 18px; border-radius: 6px; }
+  /* One row — name picker, amount stepper, GIVE — on a shared 40px height and
+     6px corner. The stepper and GIVE are compact and fixed; the name picker
+     takes the remaining width. Phones narrower than ~350px can't fit all
+     three without squeezing the name to nothing, so there it drops to two
+     rows (picker on top, stepper + GIVE below). */
+  #donateCard .claim-row { flex-wrap: nowrap; gap: 6px; max-width: 420px; }
+  #donateCard .select-trigger { flex: 1 1 0; min-width: 0; height: 40px; padding-block: 0; padding-inline: 8px; }
+  #donateCard .qty-stepper { flex: none; height: 40px; }
+  #donateCard .qty-btn { width: 26px; }
+  #donateCard .qty-input { flex: none; width: 54px; padding: 0 2px; font-size: 12px; }
+  #donateCard #donateBtn { flex: none; height: 40px; padding: 0 12px; border-radius: 6px; }
+  @media (max-width: 349px) {
+    #donateCard .claim-row { flex-wrap: wrap; gap: 8px; }
+    #donateCard .select-trigger { flex: 1 1 100%; }
+    #donateCard .qty-stepper { flex: 1 1 0; min-width: 0; }
+    #donateCard .qty-input { flex: 1 1 0; width: auto; }
+    #donateCard #donateBtn { min-width: 88px; }
+  }
   .profile-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
   .profile-avatar { width: 54px; height: 54px; font-size: 22px; border-width: 1px; font-family: 'Bebas Neue', sans-serif; }
   .profile-id { flex: 1; min-width: 0; }
