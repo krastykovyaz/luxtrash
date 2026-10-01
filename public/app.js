@@ -1526,12 +1526,17 @@
     homeDutyAvatar.hidden = false;
     homeDutyAvatar.textContent = initials(dutyPerson);
 
-    // With a local "who am I" set, the name picker is redundant — it's
-    // pre-filled with that person and hidden, leaving one big button.
+    // With a local "who am I" set, the picker defaults to that person —
+    // but stays visible and editable, since whoever's actually doing a
+    // given step (especially "back", often a different housemate than
+    // whoever took it out) is who the reward and achievements go to.
     var meOnRoster = ME && ROSTER.includes(ME);
-    outNameSelect.hidden = meOnRoster;
-    backNameSelect.hidden = meOnRoster;
-    if (meOnRoster) { outNameSelect.value = ME; backNameSelect.value = ME; }
+    if (meOnRoster) {
+      outNameSelect.value = ME;
+      backNameSelect.value = ME;
+      syncSelectTrigger(outNameSelect);
+      syncSelectTrigger(backNameSelect);
+    }
 
     if (!task.out_at) {
       outRow.hidden = false;
