@@ -1866,57 +1866,46 @@
     return pushSupported ? navigator.serviceWorker.register("/sw.js") : Promise.reject(new Error("unsupported"));
   }
 
-  function renderPushUI() {
-    if (iosNeedsHomeScreen) {
-      pushStatus.textContent = tr("pushIosHint");
-      pushToggleBtn.hidden = true;
-      return;
+  // The switch is always on screen. Where push can't work on this page it
+  // stays off and disabled, with the status line saying why — hiding it
+  // just left people looking for a control that wasn't there.
+  function renderPushUI(failed) {
+    function setSwitch(on, usable, statusKey) {
+      pushToggleBtn.setAttribute("aria-checked", on ? "true" : "false");
+      pushToggleBtn.setAttribute("aria-label", on ? tr("pushDisableBtn") : tr("pushEnableBtn"));
+      pushToggleBtn.dataset.subscribed = on ? "1" : "";
+      pushToggleBtn.disabled = !usable;
+      pushStatus.textContent = tr(statusKey);
     }
-    if (!pushSupported) {
-      pushStatus.textContent = tr("pushUnsupportedStatus");
-      pushToggleBtn.hidden = true;
-      return;
-    }
-    if (Notification.permission === "denied") {
-      pushStatus.textContent = tr("pushDeniedStatus");
-      pushToggleBtn.hidden = true;
-      return;
-    }
+    if (iosNeedsHomeScreen) { setSwitch(false, false, "pushIosHint"); return; }
+    if (!pushSupported) { setSwitch(false, false, "pushUnsupportedStatus"); return; }
+    if (Notification.permission === "denied") { setSwitch(false, false, "pushDeniedStatus"); return; }
     swRegistration().then(function (reg) {
       return reg.pushManager.getSubscription();
     }).then(function (sub) {
-      pushToggleBtn.hidden = false;
-      pushToggleBtn.setAttribute("aria-checked", sub ? "true" : "false");
-      pushToggleBtn.setAttribute("aria-label", sub ? tr("pushDisableBtn") : tr("pushEnableBtn"));
-      pushToggleBtn.dataset.subscribed = sub ? "1" : "";
-      pushStatus.textContent = sub ? tr("pushEnabledStatus") : tr("pushDisabledStatus");
+      setSwitch(!!sub, true, failed === true ? "pushErrorStatus" : sub ? "pushEnabledStatus" : "pushDisabledStatus");
     }).catch(function () {
-      pushStatus.textContent = tr("pushErrorStatus");
-      pushToggleBtn.hidden = true;
+      setSwitch(false, true, "pushErrorStatus"); // left enabled so a tap can retry
     });
   }
 
-  pushToggleBtn.addEventListener("click", function () {
-    pushToggleBtn.disabled = true;
-    if (pushToggleBtn.dataset.subscribed) {
-      swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
-        .then(function (sub) {
-          if (!sub) return;
-          var endpoint = sub.endpoint;
-          return sub.unsubscribe().then(function () {
-            return fetch(api("/api/push/unsubscribe"), {
-              method: "POST", headers: { "content-type": "application/json" },
-              body: JSON.stringify({ endpoint: endpoint })
-            });
+  function pushUnsubscribe() {
+    return swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (!sub) return;
+        var endpoint = sub.endpoint;
+        return sub.unsubscribe().then(function () {
+          return fetch(api("/api/push/unsubscribe"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ endpoint: endpoint })
           });
-        })
-        .then(renderPushUI)
-        .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
-        .finally(function () { pushToggleBtn.disabled = false; });
-      return;
-    }
-    Notification.requestPermission().then(function (perm) {
-      if (perm !== "granted") { renderPushUI(); return; }
+        });
+      });
+  }
+
+  function pushSubscribe() {
+    return Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") return;
       return fetch(api("/api/push/vapid-public-key"))
         .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
         .then(function (data) { return swRegistration().then(function (reg) {
@@ -1928,10 +1917,16 @@
             body: JSON.stringify({ subscription: sub.toJSON() })
           });
         })
-        .then(renderPushUI);
-    })
-      .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
-      .finally(function () { pushToggleBtn.disabled = false; });
+        .then(function (r) { if (!r.ok) throw new Error("not saved"); });
+    });
+  }
+
+  pushToggleBtn.addEventListener("click", function () {
+    pushToggleBtn.disabled = true;
+    var failed = false;
+    (pushToggleBtn.dataset.subscribed ? pushUnsubscribe() : pushSubscribe())
+      .catch(function () { failed = true; })
+      .then(function () { renderPushUI(failed); });
   });
 
   if (pushSupported) swRegistration().catch(function () {});
