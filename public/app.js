@@ -1706,7 +1706,7 @@
       })
       .then(function (task) {
         backPhoto.reset();
-        celebrate(task.out_by, task.coins + (task.photoBonus || 0));
+        celebrate(task.back_by, task.coins + (task.photoBonus || 0));
         celebrateAchievements(task.unlocked);
         loadLeaderboard();
         // History has to be fresh before loadTask re-renders — the "no

@@ -409,16 +409,16 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
         row.back_photo = filename;
         row.back_photo_mime = req.file.mimetype;
         row.back_photo_taken_at = takenAt;
-        // Same +5 bonus as the out photo — still credited to whoever
-        // marked the bin OUT, even though this photo comes in at the back
-        // step and may be confirmed by someone else entirely.
-        if (row.out_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.out_by, "back"); }
+        // Same +5 bonus as the out photo — credited to whoever actually
+        // attached THIS photo, i.e. whoever confirmed it back, which can be
+        // a different person than who took it out.
+        if (row.back_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.back_by, "back"); }
       }
-      // Coins go to whoever took the bin OUT (matches how the leaderboard has
-      // always credited a task — see coin_ledger's backfill in db.js), not
-      // necessarily whoever confirmed it back, since those can be different
-      // people.
-      const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
+      // Coins for completing the task go to whoever actually confirmed it
+      // back — the person who was selected and clicked the button, not
+      // whoever happened to take it out earlier. Those can be different
+      // people, and it's the back step that closes the loop.
+      const unlocked = row.back_by ? coins.afterTaskCompleted(req.house.db, row.back_by) : [];
       res.json({ ...row, unlocked: [...unlocked, ...photoUnlocked], photoBonus });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message });
@@ -680,14 +680,17 @@ app.get("/", (req, res) => {
 
   const title = house ? `${house.name} · Bin Duty` : "Bin Duty";
   const description = t(lang, "tagline");
-  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+  const origin = `${req.protocol}://${req.get("host")}`;
+  const url = `${origin}${req.originalUrl}`;
+  const image = `${origin}/icon-512.png`;
 
   let html = fs.readFileSync(INDEX_HTML_PATH, "utf8");
   html = html
     .replace(/\{\{HTML_LANG\}\}/g, escapeHtmlAttr(lang))
     .replace(/\{\{OG_TITLE\}\}/g, escapeHtmlAttr(title))
     .replace(/\{\{OG_DESCRIPTION\}\}/g, escapeHtmlAttr(description))
-    .replace(/\{\{OG_URL\}\}/g, escapeHtmlAttr(url));
+    .replace(/\{\{OG_URL\}\}/g, escapeHtmlAttr(url))
+    .replace(/\{\{OG_IMAGE\}\}/g, escapeHtmlAttr(image));
   res.type("html").send(html);
 });
 

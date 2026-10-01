@@ -59,12 +59,13 @@ function afterTaskCompleted(db, name) {
   const unlocked = [];
   if (maybeUnlockHouseHero(db, name)) unlocked.push("house_hero");
 
-  // Trailing streak of this person's own tasks, most recent first, that
-  // they both took out AND brought back — an unbroken run of their turns
-  // going all the way through, not just "completed at some point."
+  // Trailing streak of tasks this person has closed out, most recent
+  // first — an unbroken run of THEM being the one who confirmed it back
+  // (name is always the back-confirming person — see the /back handler),
+  // not just "closed one out at some point."
   const rows = db.prepare(
-    "SELECT out_by, back_by, back_at FROM tasks WHERE out_by = ? AND back_at IS NOT NULL ORDER BY date_key DESC"
-  ).all(name);
+    "SELECT back_by FROM tasks WHERE back_at IS NOT NULL ORDER BY date_key DESC"
+  ).all();
   let streak = 0;
   for (const r of rows) {
     if (r.back_by === name) streak++;
@@ -92,9 +93,9 @@ function afterPerfectRound(db, name) {
 }
 
 // A photo attached to the out or back confirmation — same +5 tier as a
-// scan. Always credited to whoever marked the bin OUT (the task's owner
-// for every reward, same rule afterTaskCompleted already follows), even
-// when it's the *back* photo and a different person confirmed that step.
+// scan. Credited to whoever confirmed that specific step (the caller
+// passes out_by for the out photo, back_by for the back photo — see
+// server/index.js), since that's the person who actually attached it.
 function afterPhoto(db, name, which) {
   award(db, name, 5, "photo", which);
   const unlocked = [];
