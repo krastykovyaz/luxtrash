@@ -1886,7 +1886,8 @@
       return reg.pushManager.getSubscription();
     }).then(function (sub) {
       pushToggleBtn.hidden = false;
-      pushToggleBtn.textContent = sub ? tr("pushDisableBtn") : tr("pushEnableBtn");
+      pushToggleBtn.setAttribute("aria-checked", sub ? "true" : "false");
+      pushToggleBtn.setAttribute("aria-label", sub ? tr("pushDisableBtn") : tr("pushEnableBtn"));
       pushToggleBtn.dataset.subscribed = sub ? "1" : "";
       pushStatus.textContent = sub ? tr("pushEnabledStatus") : tr("pushDisabledStatus");
     }).catch(function () {
