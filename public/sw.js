@@ -21,6 +21,9 @@ self.addEventListener("push", function (event) {
     badge: "/icon-192.png",
     data: { url: data.url || "/" }
   };
+  // A tag makes a new notification replace the previous one with that tag
+  // (several chat messages become one entry, not a stack) and still alert.
+  if (data.tag) { options.tag = data.tag; options.renotify = true; }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
@@ -30,7 +33,7 @@ self.addEventListener("notificationclick", function (event) {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (list) {
       for (var i = 0; i < list.length; i++) {
-        if (list[i].url === url && "focus" in list[i]) return list[i].focus();
+        if ("focus" in list[i] && "navigate" in list[i]) return list[i].navigate(url).then(function (c) { return c && c.focus(); }).catch(function () { return self.clients.openWindow(url); });
       }
       if (self.clients.openWindow) return self.clients.openWindow(url);
     })

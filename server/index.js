@@ -21,6 +21,7 @@ const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
 const push = require("./push");
+const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
 const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
@@ -686,6 +687,113 @@ app.post("/api/push/unsubscribe", writeLimiter, (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+// --- Anonymous house chat. A device identifies itself with a random token it
+// made up (x-chat-token); that's all the server ever learns about who posts.
+// Clients get codenames and a "mine" flag, never an author id. ---
+const chatUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
+
+function chatKey(req, res) {
+  const token = req.get("x-chat-token");
+  if (!chat.validToken(token)) {
+    res.status(400).json({ error: "Missing chat token.", code: "NO_CHAT_TOKEN" });
+    return null;
+  }
+  return chat.authorKey(token);
+}
+
+app.get("/api/chat/messages", (req, res) => {
+  const key = chatKey(req, res);
+  if (!key) return;
+  res.set("Cache-Control", "no-store");
+  res.json(chat.list(req.house.db, req.house.slug, key));
+});
+
+app.get("/api/chat/unread", (req, res) => {
+  const key = chatKey(req, res);
+  if (!key) return;
+  const after = parseInt(req.query.after, 10) || 0;
+  res.set("Cache-Control", "no-store");
+  res.json({ unread: chat.unreadCount(req.house.db, key, after) });
+});
+
+app.post("/api/chat/messages", writeLimiter, (req, res) => {
+  chatUpload.single("photo")(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ error: uploadErr.code === "LIMIT_FILE_SIZE" ? "That picture is too large (6MB max)." : "Couldn't read that picture." });
+    }
+    const key = chatKey(req, res);
+    if (!key) return;
+    try {
+      const message = chat.post(req.house.db, req.house.slug, key, {
+        body: req.body && req.body.body,
+        replyTo: req.body && req.body.replyTo,
+        file: req.file
+      });
+      res.status(201).json(message);
+      // After the response, never in its way — a push hiccup must not fail a post.
+      push.notifyChat(req.house.db, {
+        authorKey: key,
+        parentAuthorKey: message.replyTo ? chat.authorKeyOf(req.house.db, message.replyTo.id) : null,
+        lang: req.house.language,
+        url: `/?h=${encodeURIComponent(req.house.publicSlug)}&chat=1`
+      }).catch((err) => console.error("Chat push threw:", err.message));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+});
+
+app.delete("/api/chat/messages/:id", writeLimiter, (req, res) => {
+  const key = chatKey(req, res);
+  if (!key) return;
+  const result = chat.remove(req.house.db, req.house.slug, key, parseInt(req.params.id, 10) || 0);
+  if (result === "ok") return res.json({ ok: true });
+  res.status(result === "forbidden" ? 403 : 404).json({ error: result === "forbidden" ? "You can only delete your own messages." : "That message is already gone." });
+});
+
+app.put("/api/chat/messages/:id/reaction", writeLimiter, (req, res) => {
+  const key = chatKey(req, res);
+  if (!key) return;
+  try {
+    res.json({ reactions: chat.react(req.house.db, key, parseInt(req.params.id, 10) || 0, req.body && req.body.emoji) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get("/api/chat/photo/:id", (req, res) => {
+  const photo = chat.photoOf(req.house.db, req.house.slug, parseInt(req.params.id, 10) || 0);
+  if (!photo) return res.status(404).end();
+  res.set("Cache-Control", "private, max-age=86400");
+  res.type(photo.mime);
+  fs.createReadStream(photo.file).pipe(res);
+});
+
+// Chat notifications are a second opt-in on top of push itself: this device
+// must already be subscribed, and turning it on ties the subscription to the
+// device's chat identity so it never buzzes for its own posts.
+app.get("/api/push/chat", (req, res) => {
+  const endpoint = typeof req.query.endpoint === "string" ? req.query.endpoint : "";
+  res.set("Cache-Control", "no-store");
+  res.json({ enabled: push.chatPushEnabled(req.house.db, endpoint) });
+});
+
+app.post("/api/push/chat", writeLimiter, (req, res) => {
+  const endpoint = req.body && req.body.endpoint;
+  if (!endpoint) return res.status(400).json({ error: "Missing endpoint." });
+  const enabled = !!(req.body && req.body.enabled);
+  let key = null;
+  if (enabled) {
+    key = chatKey(req, res);
+    if (!key) return;
+  }
+  if (!push.setChatPush(req.house.db, endpoint, key)) {
+    return res.status(404).json({ error: "Turn on push notifications on this device first." });
+  }
+  res.json({ enabled });
+});
+
 // --- Static frontend ---
 const INDEX_HTML_PATH = path.join(__dirname, "..", "public", "index.html");
 
@@ -755,7 +863,7 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
     }
     console.log(`Reminder run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
-    const pushResult = await push.sendDailyReminderPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    const pushResult = await push.sendDailyReminderPush(defaultDb, currentRoster(defaultDb), originalHouse.language, `/?h=${originalHouse.slug}`);
     console.log(`Reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
       (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
@@ -790,7 +898,7 @@ async function runOutFollowUp() {
     incrementOutReminderCount(defaultDb, task.date_key, task.codes);
     console.log(`Out-reminder follow-up: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
-    const pushResult = await push.sendOutFollowUpPush(defaultDb, task, originalHouse.language);
+    const pushResult = await push.sendOutFollowUpPush(defaultDb, task, originalHouse.language, `/?h=${originalHouse.slug}`);
     console.log(`Out-reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
       (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
@@ -821,7 +929,7 @@ cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AH
     const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
-    const pushResult = await push.sendWeekAheadPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    const pushResult = await push.sendWeekAheadPush(defaultDb, currentRoster(defaultDb), originalHouse.language, `/?h=${originalHouse.slug}`);
     console.log(`Week-ahead push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
       (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {

@@ -11,6 +11,9 @@ if (!fs.existsSync(HOUSES_DIR)) fs.mkdirSync(HOUSES_DIR, { recursive: true });
 const PHOTOS_DIR = path.join(DATA_DIR, "task-photos");
 if (!fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
 
+const CHAT_PHOTOS_DIR = path.join(DATA_DIR, "chat-photos");
+if (!fs.existsSync(CHAT_PHOTOS_DIR)) fs.mkdirSync(CHAT_PHOTOS_DIR, { recursive: true });
+
 // The original single house this app was built for keeps its original file
 // and path, completely untouched by multi-house support — no migration, no
 // renaming, zero risk to existing production data. Every other house gets
@@ -96,6 +99,50 @@ function ensureSchema(db, opts) {
       created_at TEXT NOT NULL
     )
   `);
+
+  // Anonymous house chat. author_key is a keyed hash of the posting device's
+  // random token — it lets a device recognise (and delete) its own messages
+  // and keeps one codename per device per week, and is never sent to clients.
+  // No name, email or roster entry is stored anywhere in these tables.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author_key TEXT NOT NULL,
+      codename TEXT NOT NULL,
+      hue INTEGER NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      photo TEXT,
+      photo_mime TEXT,
+      photo_expired INTEGER NOT NULL DEFAULT 0,
+      reply_to INTEGER,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chat_aliases (
+      author_key TEXT NOT NULL,
+      week_key TEXT NOT NULL,
+      codename TEXT NOT NULL,
+      hue INTEGER NOT NULL,
+      PRIMARY KEY (author_key, week_key)
+    );
+    -- One reaction per device per message (tapping the same emoji again
+    -- takes it back). Only counts ever leave the server, never who reacted.
+    CREATE TABLE IF NOT EXISTS chat_reactions (
+      message_id INTEGER NOT NULL,
+      author_key TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      PRIMARY KEY (message_id, author_key)
+    );
+  `);
+
+  var chatCols = db.prepare("PRAGMA table_info(chat_messages)").all().map(function (c) { return c.name; });
+  if (chatCols.indexOf("photo_expired") === -1) db.exec("ALTER TABLE chat_messages ADD COLUMN photo_expired INTEGER NOT NULL DEFAULT 0");
+
+  // Chat notifications are an opt-in per push subscription. chat_author_key
+  // being set means "this device wants them", and it's the same keyed hash
+  // chat messages carry, so a device is never notified about its own posts.
+  var pushCols = db.prepare("PRAGMA table_info(push_subscriptions)").all().map(function (c) { return c.name; });
+  if (pushCols.indexOf("chat_author_key") === -1) db.exec("ALTER TABLE push_subscriptions ADD COLUMN chat_author_key TEXT");
+  if (pushCols.indexOf("chat_pushed_at") === -1) db.exec("ALTER TABLE push_subscriptions ADD COLUMN chat_pushed_at TEXT");
 
   var rosterCols = db.prepare("PRAGMA table_info(roster)").all().map(function (c) { return c.name; });
   if (rosterCols.indexOf("occupation") === -1) {
@@ -213,8 +260,10 @@ function destroyHouseDb(slug) {
     var file = path.join(HOUSES_DIR, slug + ".sqlite" + suffix);
     if (fs.existsSync(file)) fs.unlinkSync(file);
   });
-  var photoDir = path.join(PHOTOS_DIR, slug);
-  if (fs.existsSync(photoDir)) fs.rmSync(photoDir, { recursive: true, force: true });
+  [PHOTOS_DIR, CHAT_PHOTOS_DIR].forEach(function (base) {
+    var photoDir = path.join(base, slug);
+    if (fs.existsSync(photoDir)) fs.rmSync(photoDir, { recursive: true, force: true });
+  });
 }
 
 // Where a house's proof-of-duty photos live on disk — one subfolder per
@@ -227,4 +276,12 @@ function taskPhotoDir(slug) {
   return dir;
 }
 
-module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR, destroyHouseDb, taskPhotoDir };
+// Same layout for a house's anonymous-chat pictures.
+function chatPhotoDir(slug) {
+  var key = !slug || slug === DEFAULT_SLUG ? DEFAULT_SLUG : slug;
+  var dir = path.join(CHAT_PHOTOS_DIR, key);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+module.exports = { getDb, DEFAULT_SLUG, HOUSES_DIR, DATA_DIR, destroyHouseDb, taskPhotoDir, chatPhotoDir };
