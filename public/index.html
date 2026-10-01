@@ -352,13 +352,13 @@
     flex: none; position: relative; z-index: 20;
     display: flex; justify-content: space-between;
     width: calc(100% - 32px); max-width: 760px; align-self: center;
-    margin: 4px 16px max(12px, env(safe-area-inset-bottom));
+    margin: 4px 16px max(8px, calc(env(safe-area-inset-bottom) - 20px));
     background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
     padding: 10px 18px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   }
   body.in-chat .tabbar { display: none; }
-  body.in-chat .scroller { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  body.in-chat .scroller { padding-bottom: max(4px, calc(env(safe-area-inset-bottom) - 24px)); }
   .tab-btn {
     flex: 1; background: none; border: none; color: var(--ink-faint);
     font-family: 'Work Sans', sans-serif; font-size: 10px; font-weight: 500;
