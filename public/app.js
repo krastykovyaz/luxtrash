@@ -2349,8 +2349,8 @@
   }
   function stepDonateAmount(delta) {
     var n = parseInt(donateAmountInput.value, 10);
-    if (isNaN(n)) n = delta > 0 ? donateAmountMin : donateAmountMin + 1;
-    n = Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
+    // An empty field starts at the minimum on the first tap, either button.
+    n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
     donateAmountInput.value = n;
     syncDonateAmountBtns();
   }

@@ -772,10 +772,20 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
 // nudge itself is about getting the bins out, the photo bonus is just the
 // extra incentive worth repeating. Same original-house-only scope as the
 // reminder cron above.
+// getCurrentTask counts a task as current from midnight of the day before,
+// but the first reminder only goes out at 18:00 that day — a follow-up
+// before then would be "still not out" for a task nobody's been told about.
+function outFollowUpEarliest(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y, m - 1, d - 1, 18, 0, 0);
+}
+
 async function runOutFollowUp() {
   try {
-    const task = getCurrentTask(defaultDb, new Date(), DEFAULT_FLAT_SCHEDULE);
+    const now = new Date();
+    const task = getCurrentTask(defaultDb, now, DEFAULT_FLAT_SCHEDULE);
     if (!task || task.out_at || task.out_reminder_count >= 2) return;
+    if (now < outFollowUpEarliest(task.date_key)) return;
     const result = await sendOutFollowUp(defaultDb, currentRoster(defaultDb), originalHouse.slug, task);
     incrementOutReminderCount(defaultDb, task.date_key, task.codes);
     console.log(`Out-reminder follow-up: sent ${result.sent}, skipped ${result.skipped}` +
