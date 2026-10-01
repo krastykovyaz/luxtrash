@@ -475,6 +475,8 @@
     scanSubview.hidden = which !== "scan";
     sortItSubview.hidden = which !== "sortit";
     chatSubview.hidden = which !== "chat";
+    // The chat takes the whole screen: no tab bar under it.
+    document.body.classList.toggle("in-chat", which === "chat");
     scrollPageTop();
     if (which === "chat") chatOpened(); else chatClosed();
   }
@@ -500,6 +502,7 @@
     // "Full calendar" on another tab) always lands on its dashboard, never
     // wherever a Scan/Sort It sub-view was left open.
     if (view === "home") showHomeSubview("dashboard");
+    else document.body.classList.remove("in-chat");
     scrollPageTop();
   }
   document.querySelectorAll(".tab-btn").forEach(function (btn) {
