@@ -83,7 +83,7 @@ window.T = {
     pushUnsupportedStatus: "Push notifications aren't supported in this browser.",
     pushDeniedStatus: "Notifications are blocked — enable them for this site in your browser or phone settings.",
     pushErrorStatus: "Couldn't enable notifications — try again.",
-    pushIosHint: "On iPhone: add this page to your Home Screen first (Share → Add to Home Screen), then open it from there to enable notifications — Safari tabs can't receive them directly.",
+    pushIosHint: "On {device}: add this page to your Home Screen first (Share → Add to Home Screen), then open it from there to turn notifications on — a Safari tab can't receive them.",
     landingTagline: "Split the bins, one house at a time.",
     destroyHouseOwnerNote: "You built this house, so only you see this.",
     destroyHouseBtn: "Destroy this house",

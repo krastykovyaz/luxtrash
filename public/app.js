@@ -1849,7 +1849,10 @@
   // from a page already added to the Home Screen (iOS 16.4+, "standalone"
   // display mode). Detect that case specifically so the hint is accurate
   // instead of just failing silently when the button's pressed.
-  var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  // iPadOS reports itself as a Mac; a touch-capable "Mac" is an iPad.
+  var isIpad = /ipad/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  var isIos = isIpad || /iphone|ipod/i.test(navigator.userAgent);
+  var pushNote = document.getElementById("pushNote");
   var isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   var iosNeedsHomeScreen = isIos && !isStandalone;
 
@@ -1877,7 +1880,15 @@
       pushToggleBtn.disabled = !usable;
       pushStatus.textContent = tr(statusKey);
     }
-    if (iosNeedsHomeScreen) { setSwitch(false, false, "pushIosHint"); return; }
+    // The Home Screen note is only ever shown to iPhone/iPad users in a
+    // Safari tab — nobody else needs it, and it sits under the switch as a
+    // note rather than replacing the status line.
+    pushNote.hidden = !iosNeedsHomeScreen;
+    if (iosNeedsHomeScreen) {
+      pushNote.textContent = fmt("pushIosHint", { device: isIpad ? "iPad" : "iPhone" });
+      setSwitch(false, false, "pushDisabledStatus");
+      return;
+    }
     if (!pushSupported) { setSwitch(false, false, "pushUnsupportedStatus"); return; }
     if (Notification.permission === "denied") { setSwitch(false, false, "pushDeniedStatus"); return; }
     swRegistration().then(function (reg) {
