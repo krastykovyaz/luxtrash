@@ -489,6 +489,7 @@
     renderTaskForm();
     renderTask(currentTask);
     renderNotifyForm();
+    renderPushUI();
     renderHousesList();
     renderDestroyBox();
     gameShowItem();
@@ -1836,6 +1837,103 @@
       .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
       .finally(function () { unsubBtn.disabled = false; });
   });
+
+  // ---- push notifications — same reminders as email, delivered as a real
+  // OS notification on this device instead. Opt-in is the browser's own
+  // permission prompt; there's no server-side account to confirm, a
+  // subscription is useless to anyone but the device that created it. ----
+  var pushStatus = document.getElementById("pushStatus");
+  var pushToggleBtn = document.getElementById("pushToggleBtn");
+  var pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  // iOS Safari can't do push from an ordinary browser tab at all — only
+  // from a page already added to the Home Screen (iOS 16.4+, "standalone"
+  // display mode). Detect that case specifically so the hint is accurate
+  // instead of just failing silently when the button's pressed.
+  var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  var iosNeedsHomeScreen = isIos && !isStandalone;
+
+  function urlBase64ToUint8Array(base64) {
+    var padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    var base64Safe = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base64Safe);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  function swRegistration() {
+    return pushSupported ? navigator.serviceWorker.register("/sw.js") : Promise.reject(new Error("unsupported"));
+  }
+
+  function renderPushUI() {
+    if (iosNeedsHomeScreen) {
+      pushStatus.textContent = tr("pushIosHint");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    if (!pushSupported) {
+      pushStatus.textContent = tr("pushUnsupportedStatus");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    if (Notification.permission === "denied") {
+      pushStatus.textContent = tr("pushDeniedStatus");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    swRegistration().then(function (reg) {
+      return reg.pushManager.getSubscription();
+    }).then(function (sub) {
+      pushToggleBtn.hidden = false;
+      pushToggleBtn.textContent = sub ? tr("pushDisableBtn") : tr("pushEnableBtn");
+      pushToggleBtn.dataset.subscribed = sub ? "1" : "";
+      pushStatus.textContent = sub ? tr("pushEnabledStatus") : tr("pushDisabledStatus");
+    }).catch(function () {
+      pushStatus.textContent = tr("pushErrorStatus");
+      pushToggleBtn.hidden = true;
+    });
+  }
+
+  pushToggleBtn.addEventListener("click", function () {
+    pushToggleBtn.disabled = true;
+    if (pushToggleBtn.dataset.subscribed) {
+      swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
+        .then(function (sub) {
+          if (!sub) return;
+          var endpoint = sub.endpoint;
+          return sub.unsubscribe().then(function () {
+            return fetch(api("/api/push/unsubscribe"), {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ endpoint: endpoint })
+            });
+          });
+        })
+        .then(renderPushUI)
+        .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
+        .finally(function () { pushToggleBtn.disabled = false; });
+      return;
+    }
+    Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") { renderPushUI(); return; }
+      return fetch(api("/api/push/vapid-public-key"))
+        .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
+        .then(function (data) { return swRegistration().then(function (reg) {
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(data.key) });
+        }); })
+        .then(function (sub) {
+          return fetch(api("/api/push/subscribe"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ subscription: sub.toJSON() })
+          });
+        })
+        .then(renderPushUI);
+    })
+      .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
+      .finally(function () { pushToggleBtn.disabled = false; });
+  });
+
+  if (pushSupported) swRegistration().catch(function () {});
 
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no

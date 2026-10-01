@@ -83,6 +83,20 @@ function ensureSchema(db, opts) {
     db.exec("ALTER TABLE accounts ADD COLUMN confirm_token TEXT");
   }
 
+  // Web Push subscriptions — one row per browser/device that's turned
+  // notifications on, keyed by its push endpoint (unique per browser
+  // install). Not tied to a roster name: like email reminders, a push goes
+  // to every subscribed device in the house, not filtered by whose turn it
+  // is — same reasoning as sendDailyReminders in mailer.js.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   var rosterCols = db.prepare("PRAGMA table_info(roster)").all().map(function (c) { return c.name; });
   if (rosterCols.indexOf("occupation") === -1) {
     db.exec("ALTER TABLE roster ADD COLUMN occupation TEXT");

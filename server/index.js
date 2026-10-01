@@ -20,6 +20,7 @@ const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
 const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const push = require("./push");
 const { LANGS, t } = require("./i18n");
 const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
@@ -659,6 +660,32 @@ app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
   res.status(200).send("OK");
 });
 
+// --- Web Push: same trigger points as the email reminders above, delivered
+// as a real OS notification instead. No confirm-by-email step needed here —
+// the browser's own permission prompt is the opt-in, and a subscription is
+// useless to anyone but the device that created it.
+app.get("/api/push/vapid-public-key", (req, res) => {
+  const key = push.publicKey();
+  if (!key) return res.status(503).json({ error: "Push isn't configured on the server." });
+  res.json({ key });
+});
+
+app.post("/api/push/subscribe", writeLimiter, (req, res) => {
+  const sub = req.body && req.body.subscription;
+  if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+    return res.status(400).json({ error: "Malformed subscription." });
+  }
+  push.saveSubscription(req.house.db, sub);
+  res.status(201).json({ ok: true });
+});
+
+app.post("/api/push/unsubscribe", writeLimiter, (req, res) => {
+  const endpoint = req.body && req.body.endpoint;
+  if (!endpoint) return res.status(400).json({ error: "Missing endpoint." });
+  push.removeSubscription(req.house.db, endpoint);
+  res.status(200).json({ ok: true });
+});
+
 // --- Static frontend ---
 const INDEX_HTML_PATH = path.join(__dirname, "..", "public", "index.html");
 
@@ -728,6 +755,9 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
     }
     console.log(`Reminder run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendDailyReminderPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    console.log(`Reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
     // An error here must never take the whole process down with it — it's
     // a background job, not a request handler.
@@ -750,6 +780,9 @@ async function runOutFollowUp() {
     incrementOutReminderCount(defaultDb, task.date_key, task.codes);
     console.log(`Out-reminder follow-up: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendOutFollowUpPush(defaultDb, task, originalHouse.language);
+    console.log(`Out-reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
     console.error("Out-reminder follow-up threw:", err.message);
   }
@@ -778,6 +811,9 @@ cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AH
     const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendWeekAheadPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    console.log(`Week-ahead push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
     console.error("Week-ahead notice run threw:", err.message);
   }
