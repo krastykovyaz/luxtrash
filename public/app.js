@@ -2432,6 +2432,31 @@
 
   if (pushSupported) swRegistration().catch(function () {});
 
+  // ---- picking up new versions. An installed app can sit in the background for
+  // days and is never reloaded, so without this it keeps running whatever
+  // version it last opened as. Every time it's brought back to the front it
+  // asks for a newer service worker; when one takes over, the page reloads —
+  // unless something unsent is on screen (a half-written chat message, an
+  // attached picture), in which case it waits for the next time. ----
+  if (pushSupported) {
+    var hadController = !!navigator.serviceWorker.controller;
+    var updateReady = false;
+    var unsentWork = function () {
+      return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile());
+    };
+    var reloadIfReady = function () { if (updateReady && !unsentWork()) location.reload(); };
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!hadController) { hadController = true; return; } // first-ever install, nothing to replace
+      updateReady = true;
+      if (document.hidden) reloadIfReady();
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { reloadIfReady(); return; }
+      reloadIfReady();
+      navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); }).catch(function () {});
+    });
+  }
+
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no
   // accounts, nothing server-side tracks "your" houses, it's purely what's
