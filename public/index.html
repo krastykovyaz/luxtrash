@@ -557,6 +557,15 @@
   @media (min-width: 900px) { .chat-composer { bottom: 0; padding-bottom: 8px; } .chat-msg { max-width: 70%; } }
   @media (prefers-reduced-motion: reduce) { .chat-msg.flash { animation: none; } }
 
+  /* iPhone Safari zooms the whole page into any text field under 16px when it
+     is tapped, and leaves it zoomed. Applied on iOS only (this @supports test
+     is true there and nowhere else) so the design is unchanged elsewhere. */
+  @supports (-webkit-touch-callout: none) {
+    input.claim-select, .qty-input, #donateCard .qty-input { font-size: 16px; }
+    input.claim-select::placeholder { font-size: 13px; }
+    .qty-input::placeholder, #donateCard .qty-input::placeholder { font-size: 12px; }
+  }
+
   /* ---- roster tab (Timetable & roster) ---- */
   .page-title { font-size: 18px; font-weight: 600; color: var(--ink); }
   .tw-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }

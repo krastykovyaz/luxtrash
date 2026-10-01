@@ -3,6 +3,10 @@
 // interception: registering it is just the browser's required plumbing for
 // push to work at all.
 
+// Changing this line makes installed copies fetch a new worker, which is what
+// tells pages that predate the /version check to refresh themselves.
+var SW_VERSION = "2026-10-01.3";
+
 self.addEventListener("install", function (event) {
   self.skipWaiting();
 });

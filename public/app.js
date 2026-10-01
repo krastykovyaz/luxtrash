@@ -2280,6 +2280,10 @@
     };
     chatOpenFromIntent();
     document.addEventListener("visibilitychange", function () { if (!document.hidden) chatOpenFromIntent(); });
+    // iOS doesn't always fire visibilitychange when an installed app is
+    // brought back by a notification; these cover the other ways it wakes.
+    window.addEventListener("focus", chatOpenFromIntent);
+    window.addEventListener("pageshow", chatOpenFromIntent);
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("message", function (ev) {
         if (ev.data && ev.data.type === "open-intent") chatOpenFromIntent();
@@ -2443,32 +2447,46 @@
   // ---- picking up new versions. An installed app can sit in the background for
   // days and is never reloaded, so without this it keeps running whatever
   // version it last opened as. Every time it's brought to the front it asks
-  // for a newer service worker; once one has taken over, the page reloads —
-  // but only when it goes to the background, never while it's being looked
-  // at, and never over something in progress (a half-written chat message, an
-  // attached picture, an open scan or quiz). An open chat is reopened after. ----
+  // the server for the current version (and for a newer service worker); if
+  // either changed, the page reloads — but only when it goes to the
+  // background, never while it's being looked at, and never over something in
+  // progress (a half-written chat message, an attached picture, an open scan
+  // or quiz). An open chat is reopened after. ----
+  var updateReady = false;
+  var loadedVersion = null;
+  var workInProgress = function () {
+    return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
+      !scanSubview.hidden || !sortItSubview.hidden);
+  };
+  var reloadIfReady = function () {
+    if (!updateReady || workInProgress()) return;
+    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+    location.reload();
+  };
+  var fetchVersion = function () {
+    return fetch("/version", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return (d && d.version) || null; })
+      .catch(function () { return null; });
+  };
+  fetchVersion().then(function (v) { loadedVersion = v; });
   if (pushSupported) {
     var hadController = !!navigator.serviceWorker.controller;
-    var updateReady = false;
-    var workInProgress = function () {
-      return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
-        !scanSubview.hidden || !sortItSubview.hidden);
-    };
-    var reloadIfReady = function () {
-      if (!updateReady || workInProgress()) return;
-      try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
-      location.reload();
-    };
     navigator.serviceWorker.addEventListener("controllerchange", function () {
       if (!hadController) { hadController = true; return; } // first-ever install, nothing to replace
       updateReady = true;
       if (document.hidden) reloadIfReady();
     });
-    document.addEventListener("visibilitychange", function () {
-      if (document.hidden) { reloadIfReady(); return; }
-      navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); }).catch(function () {});
-    });
   }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { reloadIfReady(); return; }
+    fetchVersion().then(function (v) {
+      if (!v) return;
+      if (!loadedVersion) { loadedVersion = v; return; }
+      if (v !== loadedVersion) updateReady = true;
+    });
+    if (pushSupported) navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); }).catch(function () {});
+  });
 
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no

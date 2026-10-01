@@ -829,6 +829,18 @@ app.get("/", (req, res) => {
   res.type("html").send(html);
 });
 
+// A fingerprint of the files that make up the app. An installed app compares
+// it with the one it loaded as, to notice that a newer version is out — it is
+// never reloaded on its own, so it would otherwise run stale code for days.
+const VERSION_FILES = ["index.html", "app.js", "i18n.js", "sw.js"].map((f) => path.join(__dirname, "..", "public", f));
+app.get("/version", (req, res) => {
+  const stamp = VERSION_FILES.map((f) => {
+    try { const st = fs.statSync(f); return `${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return "0"; }
+  }).join("|");
+  res.set("Cache-Control", "no-store");
+  res.json({ version: crypto.createHash("sha1").update(stamp).digest("hex").slice(0, 12) });
+});
+
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const PORT = process.env.PORT || 3000;
