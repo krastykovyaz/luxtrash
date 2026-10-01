@@ -218,6 +218,8 @@ function ensureSchema(db, opts) {
       codes TEXT NOT NULL
     )
   `);
+
+  require("./auth").ensureTables(db);
 }
 
 var cache = new Map();

@@ -19,7 +19,8 @@ const cron = require("node-cron");
 const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
-const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail, sendLoginCodeEmail } = require("./mailer");
+const auth = require("./auth");
 const push = require("./push");
 const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
@@ -171,6 +172,22 @@ app.get("/api/houses/:slug", (req, res) => {
 // the page URL would hijack the whole page load into a raw JSON 404
 // instead of letting index.html load and show its own "not found" state.
 app.use("/api", resolveHouse);
+
+// Who this request is signed in as (a name proven with an emailed code), or
+// null. Only the few routes that act on behalf of a protected name look at it.
+app.use("/api", (req, res, next) => {
+  const token = req.get("x-auth-token");
+  req.authName = token ? auth.sessionName(req.house.db, token) : null;
+  next();
+});
+
+// A protected name (one with a confirmed email) can only be acted for by a
+// device that signed in as it. Open names pass straight through.
+function requireSignedIn(req, res, name) {
+  if (!auth.isLocked(req.house.db, name) || req.authName === name) return true;
+  res.status(401).json({ error: "Sign in as " + name + " with the emailed code first.", code: "AUTH_REQUIRED" });
+  return false;
+}
 
 // --- Camera bin-check (Gemini) ---
 // multer.memoryStorage() above means the photo only ever exists as an
@@ -491,6 +508,7 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
   if (from === to) {
     return res.status(400).json({ error: "Pick someone else to give coins to." });
   }
+  if (!requireSignedIn(req, res, from)) return;
   if (!Number.isInteger(amount) || amount <= 0 || amount > 1000) {
     return res.status(400).json({ error: "Amount has to be a whole number between 1 and 1000." });
   }
@@ -575,7 +593,11 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   if (!EMAIL_RE.test(email)) {
     return res.status(400).json({ error: "That doesn't look like a valid email address." });
   }
+  if (!requireSignedIn(req, res, name)) return;
 
+  // The first email on an open name: this device is setting the name up, so
+  // it gets signed in as it (confirming the email is what makes it protected).
+  const wasOpen = !auth.isLocked(req.house.db, name) && req.authName !== name;
   const token = crypto.randomBytes(24).toString("hex");
   req.house.db.prepare(
     "INSERT INTO accounts (email, name, language, created_at, confirmed, confirm_token) VALUES (?, ?, ?, ?, 0, ?) " +
@@ -588,7 +610,7 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
     `?h=${encodeURIComponent(req.house.publicSlug)}`;
   try {
     await sendConfirmationEmail(email, language, name, confirmUrl, req.house.publicSlug);
-    res.status(202).json({ pending: true });
+    res.status(202).json({ pending: true, session: wasOpen ? auth.createSession(req.house.db, name) : undefined });
   } catch (err) {
     const status = err.code === "NO_SMTP" ? 503 : 502;
     res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
@@ -641,11 +663,14 @@ app.get("/api/subscribe/status/:name", (req, res) => {
 });
 
 app.delete("/api/subscribe/by-name/:name", writeLimiter, (req, res) => {
+  if (!requireSignedIn(req, res, req.params.name)) return;
   req.house.db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
   res.json({ ok: true });
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
+  const owner = req.house.db.prepare("SELECT name FROM accounts WHERE email = ?").get(req.params.email.toLowerCase());
+  if (owner && !requireSignedIn(req, res, owner.name)) return;
   req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
   res.json({ ok: true });
 });
@@ -665,6 +690,59 @@ app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
 // as a real OS notification instead. No confirm-by-email step needed here —
 // the browser's own permission prompt is the opt-in, and a subscription is
 // useless to anyone but the device that created it.
+// ---- signing in as a housemate with an emailed code (see server/auth.js) ----
+
+// Which names are protected, and (if this device sent a session token) who it
+// is signed in as. A token the server no longer knows comes back as null so
+// the page can drop it.
+app.get("/api/auth/state", (req, res) => {
+  res.json({ session: req.authName, locked: auth.lockedNames(req.house.db) });
+});
+
+function authName(req) {
+  const name = typeof (req.body || {}).name === "string" ? req.body.name.trim() : "";
+  return currentRoster(req.house.db).includes(name) ? name : "";
+}
+
+app.post("/api/auth/request", mailLimiter, async (req, res) => {
+  const name = authName(req);
+  if (!name) return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
+  const account = auth.accountFor(req.house.db, name);
+  if (!account) return res.status(400).json({ error: "That name has no confirmed email, so it doesn't need a code.", code: "NOT_LOCKED" });
+
+  const issued = auth.issueCode(req.house.db, name);
+  if (issued.error) {
+    return res.status(429).json({
+      error: issued.error === "locked" ? "Too many wrong codes — try again later." : "A code was just sent — wait a minute before asking again.",
+      code: issued.error === "locked" ? "AUTH_LOCKED" : "AUTH_COOLDOWN",
+      wait: issued.wait
+    });
+  }
+  try {
+    await sendLoginCodeEmail(account.email, account.language, name, issued.code);
+    res.json({ sent: true, email: maskEmail(account.email) });
+  } catch (err) {
+    auth.dropCode(req.house.db, name);
+    const status = err.code === "NO_SMTP" ? 503 : 502;
+    res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
+  }
+});
+
+app.post("/api/auth/verify", writeLimiter, (req, res) => {
+  const name = authName(req);
+  if (!name) return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
+  const code = typeof req.body.code === "string" ? req.body.code.replace(/\s+/g, "") : "";
+  const result = auth.verifyCode(req.house.db, name, code);
+  if (result.token) return res.json({ token: result.token, name });
+  const status = result.error === "locked" ? 429 : 400;
+  res.status(status).json({ error: "Code not accepted.", code: "AUTH_" + result.error.toUpperCase(), left: result.left, wait: result.wait });
+});
+
+app.post("/api/auth/logout", writeLimiter, (req, res) => {
+  auth.revoke(req.house.db, req.get("x-auth-token"));
+  res.json({ ok: true });
+});
+
 app.get("/api/push/vapid-public-key", (req, res) => {
   const key = push.publicKey();
   if (!key) return res.status(503).json({ error: "Push isn't configured on the server." });

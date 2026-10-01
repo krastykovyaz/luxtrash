@@ -108,6 +108,29 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl, houseSlug) {
   });
 }
 
+// The one-time sign-in code for a protected name. A transactional message, so
+// no unsubscribe headers — it only ever goes out because someone just asked.
+async function sendLoginCodeEmail(email, lang, name, code) {
+  const transport = getTransporter();
+  if (!transport) {
+    const err = new Error("Email isn't configured on the server.");
+    err.code = "NO_SMTP";
+    throw err;
+  }
+  const bodyText = t(lang, "loginCodeBody").replace("{name}", name);
+  const html = wrapEmail(`
+    <p style="margin:0 0 20px;">${escapeHtml(bodyText)}</p>
+    <p style="margin:0;font-family:'Courier New',monospace;font-size:34px;font-weight:700;letter-spacing:8px;color:${COLORS.accent};">${escapeHtml(code)}</p>
+  `);
+  await transport.sendMail({
+    from: fromHeader(),
+    to: email,
+    subject: t(lang, "loginCodeSubject"),
+    text: `${bodyText}\n\n${code}`,
+    html
+  });
+}
+
 // Sends tomorrow's reminder to every CONFIRMED account, each in their own
 // preferred language — but only on days that actually have a collection
 // tomorrow. Returns { sent, skipped, errors, dueTomorrow } for logging.
@@ -272,5 +295,5 @@ module.exports = {
   sendDailyReminders, buildTomorrowMessage,
   sendOutFollowUp, buildOutFollowUpMessage,
   sendWeekAheadNotices, buildWeekAheadMessage,
-  getTransporter, sendCheckResult, sendConfirmationEmail
+  getTransporter, sendCheckResult, sendConfirmationEmail, sendLoginCodeEmail
 };

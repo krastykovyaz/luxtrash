@@ -179,6 +179,39 @@
     } catch (e) {}
   }
 
+  // ---- signing in as a protected name. A name with a confirmed email needs a
+  // code emailed to that address; the session token it earns is kept per
+  // house and sent with every request, so the device stays signed in until
+  // the person signs out (and then needs a new code). ----
+  function getAuthToken() {
+    try { return localStorage.getItem(houseKey("binDutyAuth")) || ""; } catch (e) { return ""; }
+  }
+  function setAuthToken(token) {
+    try {
+      if (token) localStorage.setItem(houseKey("binDutyAuth"), token);
+      else localStorage.removeItem(houseKey("binDutyAuth"));
+    } catch (e) {}
+  }
+  // fetch() for the house's own API: same call, plus the session token if there is one.
+  function apiFetch(url, opts) {
+    var token = getAuthToken();
+    if (!token) return fetch(url, opts);
+    opts = Object.assign({}, opts);
+    var headers = new Headers(opts.headers || {});
+    headers.set("x-auth-token", token);
+    opts.headers = headers;
+    return fetch(url, opts);
+  }
+  var AUTH = { session: null, locked: [] };
+  function isLockedName(name) { return AUTH.locked.indexOf(name) !== -1; }
+  // Called once the server has said who this device is signed in as: a
+  // protected name can only stay picked while the session is for that name.
+  function enforceSession(state) {
+    AUTH = state && Array.isArray(state.locked) ? state : AUTH;
+    if (state && !state.session) setAuthToken("");
+    if (ME && isLockedName(ME) && AUTH.session !== ME) setMe("");
+  }
+
   var ACHIEVEMENT_META = {
     first_scrap: { icon: "\u{1F4F7}" },
     perfect_round: { icon: "⭐" },
@@ -861,7 +894,7 @@
   var addNameBtn = document.getElementById("addNameBtn");
 
   function loadRosterFull() {
-    return fetch(api("/api/roster/full"))
+    return apiFetch(api("/api/roster/full"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         ROSTER_OCCUPATION = {};
@@ -893,7 +926,7 @@
     var name = addNameInput.value.trim();
     if (!name) return;
     addNameBtn.disabled = true;
-    fetch(api("/api/roster"), {
+    apiFetch(api("/api/roster"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: name })
@@ -912,7 +945,7 @@
   }
 
   function removeFromRoster(name) {
-    fetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
+    apiFetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -991,7 +1024,7 @@
       gFeedbackEl.textContent = gScoreVal === gQueue.length ? tr("perfectRound") : tr("solidRound");
       if (gScoreVal === gQueue.length && ME && !gRoundReported) {
         gRoundReported = true;
-        fetch(api("/api/quiz/complete"), {
+        apiFetch(api("/api/quiz/complete"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: ME, correct: gScoreVal, total: gQueue.length })
@@ -1116,7 +1149,7 @@
     // Returns the promise — callers that render the "next collection"
     // fallback (which reads TASK_HISTORY) sequence themselves after this,
     // so that check never runs against stale/empty history.
-    return fetch(api("/api/tasks/history"))
+    return apiFetch(api("/api/tasks/history"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         TASK_HISTORY = {};
@@ -1636,14 +1669,14 @@
   }
 
   function loadTask() {
-    return fetch(api("/api/tasks/current"))
+    return apiFetch(api("/api/tasks/current"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(renderTask)
       .catch(function () { claimStatus.textContent = tr("taskFailed"); });
   }
 
   function loadLeaderboard() {
-    return fetch(api("/api/tasks/leaderboard"))
+    return apiFetch(api("/api/tasks/leaderboard"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         var tally = {};
@@ -1733,7 +1766,7 @@
     }
     // No content-type header — fetch sets the multipart boundary itself
     // from the FormData body; setting it manually breaks the upload.
-    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -1765,7 +1798,7 @@
       var backTaken = backPhoto.getTakenAt();
       if (backTaken) form.append("photoTakenAt", backTaken.toISOString());
     }
-    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -1822,7 +1855,7 @@
 
   // Who's subscribed (names only) — drives the dot on roster avatars.
   function loadSubscribers() {
-    fetch(api("/api/subscribe"))
+    apiFetch(api("/api/subscribe"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         subscribedNames = {};
@@ -1845,7 +1878,7 @@
       subscribeForm.hidden = false;
       return;
     }
-    fetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
+    apiFetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (s) {
         subscribedState.hidden = !s.subscribed;
@@ -1863,7 +1896,7 @@
     if (!ME) { renderNotifyForm(); return; }
     notifySubscribeBtn.disabled = true;
     notifyStatus.textContent = tr("notifySubscribing");
-    fetch(api("/api/subscribe"), {
+    apiFetch(api("/api/subscribe"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1876,7 +1909,9 @@
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
-      .then(function () {
+      .then(function (data) {
+        // First email on an open name: this device is the one setting it up, so it stays signed in.
+        if (data && data.session) { setAuthToken(data.session); AUTH.session = ME; }
         notifyEmailInput.value = "";
         notifyStatus.textContent = tr("notifyPending");
       })
@@ -1887,7 +1922,7 @@
   unsubBtn.addEventListener("click", function () {
     if (!ME) return;
     unsubBtn.disabled = true;
-    fetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
+    apiFetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
       .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
       .then(function () {
         notifyStatus.textContent = tr("unsubDone");
@@ -1956,7 +1991,7 @@
   function chatFetch(path, opts) {
     opts = opts || {};
     opts.headers = Object.assign({ "x-chat-token": chatToken() }, opts.headers || {});
-    return fetch(api(path), opts).then(function (r) {
+    return apiFetch(api(path), opts).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; }).then(function (e) { throw new Error(e.error || "failed"); });
       return r.json();
     });
@@ -2363,7 +2398,7 @@
   function loadPushChat(sub) {
     setPushChat(false, false);
     if (!sub) return;
-    fetch(api("/api/push/chat?endpoint=" + encodeURIComponent(sub.endpoint)))
+    apiFetch(api("/api/push/chat?endpoint=" + encodeURIComponent(sub.endpoint)))
       .then(function (r) { return r.json(); })
       .then(function (d) { setPushChat(!!d.enabled, true); })
       .catch(function () { setPushChat(false, true); });
@@ -2419,7 +2454,7 @@
         if (!sub) return;
         var endpoint = sub.endpoint;
         return sub.unsubscribe().then(function () {
-          return fetch(api("/api/push/unsubscribe"), {
+          return apiFetch(api("/api/push/unsubscribe"), {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ endpoint: endpoint })
           });
@@ -2430,13 +2465,13 @@
   function pushSubscribe() {
     return Notification.requestPermission().then(function (perm) {
       if (perm !== "granted") return;
-      return fetch(api("/api/push/vapid-public-key"))
+      return apiFetch(api("/api/push/vapid-public-key"))
         .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
         .then(function (data) { return swRegistration().then(function (reg) {
           return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(data.key) });
         }); })
         .then(function (sub) {
-          return fetch(api("/api/push/subscribe"), {
+          return apiFetch(api("/api/push/subscribe"), {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ subscription: sub.toJSON() })
           });
@@ -2775,12 +2810,14 @@
   // name picked it's the whole screen; once picked, the screen matches the
   // mockup (head, stats, language, reminders) and an "Edit" link opens it.
   var profileEdit = document.getElementById("profileEdit");
+  var meSignOut = document.getElementById("meSignOut");
   var profileEditBtn = document.getElementById("profileEditBtn");
   var profileEditOpen = false;
 
   function renderProfileEdit() {
     profileEdit.hidden = !!ME && !profileEditOpen;
     profileEditBtn.hidden = !ME;
+    meSignOut.hidden = !ME;
     profileEditBtn.textContent = tr(profileEditOpen ? "profileDoneBtn" : "profileEditBtn");
   }
   profileEditBtn.addEventListener("click", function () {
@@ -2811,8 +2848,9 @@
     statStreak.textContent = gBestVal;
   }
 
-  meSelect.addEventListener("change", function () {
-    setMe(meSelect.value);
+  // Everything that depends on who "me" is, redrawn after it changes.
+  function commitMe(name) {
+    setMe(name);
     profileEditOpen = false; // picking a name collapses the panel
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
@@ -2823,6 +2861,126 @@
     renderTask(currentTask);
     renderNotifyForm();
     loadMySubscription();
+  }
+
+  // ---- the emailed-code step for protected names ----
+  var meAuth = document.getElementById("meAuth");
+  var meAuthMsg = document.getElementById("meAuthMsg");
+  var meAuthSend = document.getElementById("meAuthSend");
+  var meAuthCancel = document.getElementById("meAuthCancel");
+  var meAuthCodeRow = document.getElementById("meAuthCodeRow");
+  var meAuthCode = document.getElementById("meAuthCode");
+  var meAuthVerify = document.getElementById("meAuthVerify");
+  var pendingName = "";
+
+  function closeAuthPanel() {
+    pendingName = "";
+    meAuth.hidden = true;
+    meAuthCodeRow.hidden = true;
+    meAuthCode.value = "";
+  }
+  function openAuthPanel(name) {
+    pendingName = name;
+    meSelect.value = name;
+    syncSelectTrigger(meSelect);
+    meAuth.hidden = false;
+    meAuthCodeRow.hidden = true;
+    meAuthCode.value = "";
+    meAuthSend.disabled = false;
+    meAuthMsg.textContent = tr("authProtected");
+  }
+  function postAuth(path, body) {
+    return apiFetch(api(path), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    });
+  }
+  function dropSession() {
+    if (getAuthToken()) postAuth("/api/auth/logout").catch(function () {});
+    setAuthToken("");
+    AUTH.session = null;
+  }
+
+  meSelect.addEventListener("change", function () {
+    var picked = meSelect.value;
+    if (picked && picked !== ME && isLockedName(picked)) {
+      openAuthPanel(picked); // not "me" until the code is entered
+      return;
+    }
+    closeAuthPanel();
+    // A device is one person at a time: moving to another name ends the old session.
+    if (picked !== AUTH.session) dropSession();
+    commitMe(picked);
+  });
+
+  meAuthCancel.addEventListener("click", function () {
+    closeAuthPanel();
+    renderMeSelect(); // put the picker back on whoever is signed in
+  });
+
+  meAuthSend.addEventListener("click", function () {
+    if (!pendingName) return;
+    meAuthSend.disabled = true;
+    meAuthMsg.textContent = tr("authSending");
+    postAuth("/api/auth/request", { name: pendingName })
+      .then(function (res) {
+        if (res.ok) {
+          meAuthMsg.textContent = fmt("authSent", { email: res.data.email || "" });
+        } else if (res.data && res.data.code === "AUTH_COOLDOWN") {
+          meAuthMsg.textContent = tr("authCooldown");
+        } else if (res.data && res.data.code === "AUTH_LOCKED") {
+          meAuthMsg.textContent = tr("authWait");
+          return;
+        } else {
+          meAuthMsg.textContent = (res.data && res.data.error) || tr("authFailed");
+          return;
+        }
+        meAuthCodeRow.hidden = false;
+        meAuthCode.focus();
+      })
+      .catch(function () { meAuthMsg.textContent = tr("authFailed"); })
+      .finally(function () { meAuthSend.disabled = false; meAuthSend.textContent = tr("authSend"); });
+  });
+
+  function verifyCode() {
+    var code = meAuthCode.value.replace(/\D/g, "");
+    if (!pendingName || code.length !== 6) return;
+    var name = pendingName;
+    meAuthVerify.disabled = true;
+    meAuthMsg.textContent = tr("authVerifying");
+    postAuth("/api/auth/verify", { name: name, code: code })
+      .then(function (res) {
+        if (res.ok && res.data.token) {
+          setAuthToken(res.data.token);
+          AUTH.session = name;
+          closeAuthPanel();
+          commitMe(name);
+          return;
+        }
+        var c = res.data && res.data.code;
+        meAuthCode.value = "";
+        if (c === "AUTH_WRONG") meAuthMsg.textContent = fmt("authWrong", { n: res.data.left });
+        else if (c === "AUTH_LOCKED") meAuthMsg.textContent = tr("authWait");
+        else meAuthMsg.textContent = tr("authExpired");
+      })
+      .catch(function () { meAuthMsg.textContent = tr("authFailed"); })
+      .finally(function () { meAuthVerify.disabled = false; });
+  }
+  meAuthVerify.addEventListener("click", verifyCode);
+  meAuthCode.addEventListener("input", function () {
+    meAuthCode.value = meAuthCode.value.replace(/\D/g, "").slice(0, 6);
+    if (meAuthCode.value.length === 6) verifyCode();
+  });
+
+  // "Out": forgets who this device is. A protected name needs a new code to come back.
+  meSignOut.addEventListener("click", function () {
+    dropSession();
+    closeAuthPanel();
+    commitMe("");
+    renderMeSelect();
   });
 
   // ---- achievements ----
@@ -2858,7 +3016,7 @@
       return;
     }
     achvUnlockedMsg.textContent = "";
-    fetch(api("/api/coins/" + encodeURIComponent(ME)))
+    apiFetch(api("/api/coins/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         renderAchievements(data.achievements);
@@ -2955,7 +3113,7 @@
     }
     donateBtn.disabled = true;
     donateStatus.textContent = tr("donateSending");
-    fetch(api("/api/coins/donate"), {
+    apiFetch(api("/api/coins/donate"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from: ME, to: donateToSelect.value, amount: amount })
@@ -3002,7 +3160,7 @@
     // No live task → the row is hidden, nothing to fetch (renderTask calls
     // this again once a task is shown).
     if (!currentTask) return;
-    fetch(api("/api/reactions/" + reactionDateKey()))
+    apiFetch(api("/api/reactions/" + reactionDateKey()))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         var mine = null;
@@ -3024,7 +3182,7 @@
   Object.keys(reactButtons).forEach(function (emoji) {
     reactButtons[emoji].addEventListener("click", function () {
       if (!ME) return;
-      fetch(api("/api/reactions/" + reactionDateKey()), {
+      apiFetch(api("/api/reactions/" + reactionDateKey()), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: ME, emoji: emoji })
@@ -3149,7 +3307,7 @@
         if (!addr) return;
         emailBtn.disabled = true;
         emailStatus.textContent = tr("scanEmailSending");
-        fetch(api("/api/check/email"), {
+        apiFetch(api("/api/check/email"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
@@ -3190,7 +3348,7 @@
       formData.append("photo", file);
       if (ME) formData.append("name", ME);
 
-      fetch(api("/api/check"), { method: "POST", body: formData })
+      apiFetch(api("/api/check"), { method: "POST", body: formData })
         .then(function (r) {
           if (r.status === 413) throw { code: "TOO_LARGE" };
           if (!r.ok) {
@@ -3224,14 +3382,18 @@
   function startApp() {
     var scheduleLoadFailed = false;
     Promise.all([
-      fetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
-      fetch(api("/api/schedule"))
+      apiFetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
+      apiFetch(api("/api/schedule"))
         .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-        .catch(function () { scheduleLoadFailed = true; return {}; })
+        .catch(function () { scheduleLoadFailed = true; return {}; }),
+      apiFetch(api("/api/auth/state"))
+        .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .catch(function () { return null; })
     ])
       .then(function (results) {
         ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
         SCHEDULE = results[1];
+        enforceSession(results[2]);
         recomputeWeek();
         if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
         applyLang();

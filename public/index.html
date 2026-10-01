@@ -642,6 +642,9 @@
   .profile-stats { margin-bottom: 0; }
   .me-picker { display: flex; flex-direction: column; gap: 8px; }
   .me-picker .claim-select { align-self: stretch; width: 100%; }
+  .me-auth { display: flex; flex-direction: column; gap: 10px; }
+  .me-auth input.claim-select { flex: 1; min-width: 0; letter-spacing: 0.25em; font-variant-numeric: tabular-nums; }
+  .me-picker .sub-unsub { align-self: flex-start; }
   .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
   .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
   .push-row { display: flex; align-items: center; gap: 14px; }
@@ -1031,6 +1034,18 @@
         <div class="eyebrow" data-i18n="youHeading"></div>
         <select class="claim-select" id="meSelect"></select>
         <div class="claim-status" id="meStatus"></div>
+        <div class="me-auth" id="meAuth" hidden>
+          <div class="claim-status" id="meAuthMsg"></div>
+          <div class="claim-row">
+            <button class="stamp-btn" id="meAuthSend" type="button" data-i18n="authSend"></button>
+            <button class="sub-unsub" id="meAuthCancel" type="button" data-i18n="authCancel"></button>
+          </div>
+          <div class="claim-row" id="meAuthCodeRow" hidden>
+            <input type="text" id="meAuthCode" class="claim-select" inputmode="numeric" autocomplete="one-time-code" maxlength="6" data-i18n-placeholder="authCodePlaceholder">
+            <button class="stamp-btn" id="meAuthVerify" type="button" data-i18n="authVerify"></button>
+          </div>
+        </div>
+        <button class="sub-unsub" id="meSignOut" type="button" data-i18n="authSignOut" hidden></button>
       </div>
     </div>
     <div>
