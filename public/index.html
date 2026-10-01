@@ -358,6 +358,12 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   }
   body.in-chat .tabbar { display: none; }
+  /* Keyboard open (set from visualViewport in app.js): the app shrinks to the space above the
+     keyboard instead of letting iOS slide the whole page up and hide the conversation. */
+  body.kbd { position: fixed; left: 0; right: 0; top: var(--app-top, 0px); height: var(--app-h, 100%); }
+  body.kbd .tabbar { display: none; }
+  body.kbd .scroller { padding-top: 10px; padding-bottom: 6px; }
+  body.kbd.in-chat .masthead, body.kbd.in-chat .chat-note { display: none; }
   body.in-chat .scroller { padding-bottom: max(4px, calc(env(safe-area-inset-bottom) - 24px)); }
   .tab-btn {
     flex: 1; background: none; border: none; color: var(--ink-faint);
@@ -505,6 +511,8 @@
   body.in-chat .wrap { min-height: 100%; }
   body.in-chat .chat-composer { padding-bottom: 4px; }
   .chat-thread { flex: 1 1 auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 160px; }
+  /* Few messages sit at the bottom, next to the message box; many fill the thread and scroll. */
+  .chat-thread > :first-child:not(.chat-empty) { margin-top: auto; }
   .chat-empty { margin: auto; text-align: center; font-size: 13px; line-height: 1.5; color: var(--ink-faint); max-width: 30ch; padding: 24px 0; }
   .chat-day { align-self: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 8px 0 2px; }
   .chat-msg { max-width: 86%; align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 8px 11px 7px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }

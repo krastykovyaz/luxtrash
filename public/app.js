@@ -1976,6 +1976,26 @@
     chatStick = pageScroller.clientHeight + pageScroller.scrollTop >= pageScroller.scrollHeight - 140;
   }, { passive: true });
 
+  // On iPhones the on-screen keyboard doesn't shrink the page — iOS just pans it
+  // up, which hides the conversation while you type. Follow the visible area
+  // instead: while the keyboard is up, the app is exactly the space above it.
+  if (window.visualViewport) {
+    var vv = window.visualViewport;
+    var syncViewport = function () {
+      var open = vv.height < window.innerHeight - 100;
+      var root = document.documentElement;
+      if (open) {
+        root.style.setProperty("--app-h", vv.height + "px");
+        root.style.setProperty("--app-top", vv.offsetTop + "px");
+      }
+      var changed = document.body.classList.contains("kbd") !== open;
+      document.body.classList.toggle("kbd", open);
+      if ((changed || open) && chatStick && chatSubview.offsetParent !== null) chatToBottom();
+    };
+    vv.addEventListener("resize", syncViewport);
+    vv.addEventListener("scroll", syncViewport);
+  }
+
   function chatToken() {
     var key = houseKey("binDutyChatToken");
     var t = "";
