@@ -67,7 +67,7 @@ function wrapEmail(bodyHtml) {
             <tr>
               <td style="padding:22px 28px 26px;">
                 <div style="border-top:1px solid ${COLORS.line};padding-top:14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${COLORS.inkFaint};">
-                  Bin Duty &middot; <a href="https://binduty.sococoffee.com" style="color:${COLORS.inkFaint};">binduty.sococoffee.com</a>
+                  Bin Duty &middot; <a href="https://binduty.unilu.space" style="color:${COLORS.inkFaint};">binduty.unilu.space</a>
                 </div>
               </td>
             </tr>

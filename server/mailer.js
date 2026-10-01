@@ -5,7 +5,7 @@ const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
 let transporter = null;
 let warnedMissingConfig = false;
 
-const PUBLIC_URL = process.env.PUBLIC_URL || "https://binduty.sococoffee.com";
+const PUBLIC_URL = process.env.PUBLIC_URL || "https://binduty.unilu.space";
 
 // A friendly display name (not a bare address) and a real List-Unsubscribe
 // header are the two concrete things that actually move the needle on spam
@@ -145,6 +145,57 @@ async function sendDailyReminders(db, roster, houseSlug) {
   return { sent, skipped: 0, errors, dueTomorrow: true };
 }
 
+// A "still not out" nudge for a task whose window opened hours ago (see
+// outReminderCron in server/index.js) and that nobody has confirmed out
+// yet — distinct from buildTomorrowMessage's one-time evening heads-up.
+// Reminds about the before-photo's Scrap bonus since that's the extra
+// nudge worth repeating; the base "it's your turn" fact was already said
+// once in the first reminder.
+function buildOutFollowUpMessage(lang, roster, task) {
+  const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  const person = personForWeek(new Date(task.date_key + "T00:00:00"), roster);
+  const subject = `${t(lang, "outReminderSubject")} ${label}`;
+  const text = [
+    `${t(lang, "outReminderHeading")} — ${label}`,
+    "",
+    t(lang, "outReminderBody").replace("{name}", person).replace("{label}", label),
+  ].join("\n");
+  const html = wrapEmail(`
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:${COLORS.inkFaint};margin-bottom:10px;">${escapeHtml(t(lang, "outReminderHeading"))}</div>
+    <div style="margin-bottom:18px;">${binBadges(task.codes, (c) => binLabel(lang, c))}</div>
+    <div style="font-size:14px;line-height:1.5;">${escapeHtml(t(lang, "outReminderBody").replace("{name}", person).replace("{label}", label))}</div>
+  `);
+  return { subject, text, html, person, label };
+}
+
+async function sendOutFollowUp(db, roster, houseSlug, task) {
+  const transport = getTransporter();
+  const accounts = db.prepare("SELECT email, name, language FROM accounts WHERE confirmed = 1").all();
+  if (!transport) return { sent: 0, skipped: accounts.length, errors: [] };
+  if (!roster.length) return { sent: 0, skipped: accounts.length, errors: [] };
+
+  const errors = [];
+  let sent = 0;
+
+  for (const account of accounts) {
+    try {
+      const msg = buildOutFollowUpMessage(account.language, roster, task);
+      await transport.sendMail({
+        from: fromHeader(),
+        to: account.email,
+        subject: msg.subject,
+        text: msg.text,
+        html: msg.html,
+        headers: unsubscribeHeaders(account.email, houseSlug)
+      });
+      sent++;
+    } catch (err) {
+      errors.push({ email: account.email, message: err.message });
+    }
+  }
+  return { sent, skipped: 0, errors };
+}
+
 // End-of-week heads-up: who's on duty for the week that starts tomorrow —
 // sent to EVERY confirmed account, not just that person, so the whole
 // house knows in advance instead of finding out from the app mid-week.
@@ -219,6 +270,7 @@ async function sendCheckResult(email, lang, data) {
 
 module.exports = {
   sendDailyReminders, buildTomorrowMessage,
+  sendOutFollowUp, buildOutFollowUpMessage,
   sendWeekAheadNotices, buildWeekAheadMessage,
   getTransporter, sendCheckResult, sendConfirmationEmail
 };

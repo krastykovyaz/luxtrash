@@ -96,9 +96,15 @@
     } catch (e) {}
     setOwnerToken(slug, null);
   }
+  // The lang param lets a social app's link-preview crawler (which never
+  // runs this page's JS) render its title/description in the sharer's own
+  // language instead of always English — see the "/" route in server/index.js.
   function houseLink(slug) {
     var url = new URL(location.href);
-    url.search = slug ? "?h=" + encodeURIComponent(slug) : "";
+    var params = [];
+    if (slug) params.push("h=" + encodeURIComponent(slug));
+    params.push("lang=" + encodeURIComponent(currentLang));
+    url.search = "?" + params.join("&");
     url.hash = "";
     return url.toString();
   }
@@ -143,7 +149,13 @@
   (function initLang() {
     try {
       var saved = localStorage.getItem("binDutyLang");
-      if (saved && window.T[saved]) currentLang = saved;
+      if (saved && window.T[saved]) { currentLang = saved; return; }
+      // No saved preference yet — a link shared by someone else carries
+      // their language (see houseLink()) so a first-time visitor lands in
+      // the same language the link's preview was already shown in, rather
+      // than switching to English right after opening it.
+      var fromLink = new URLSearchParams(location.search).get("lang");
+      if (fromLink && window.T[fromLink]) currentLang = fromLink;
     } catch (e) {}
   })();
 
@@ -477,6 +489,7 @@
     renderTaskForm();
     renderTask(currentTask);
     renderNotifyForm();
+    renderPushUI();
     renderHousesList();
     renderDestroyBox();
     gameShowItem();
@@ -1145,8 +1158,8 @@
     photoModalTitle.textContent = fmtLong(new Date(dateKey + "T00:00:00"));
     photoModalGrid.innerHTML = "";
     [
-      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, captionKey: "photoModalOutCaption" },
-      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, captionKey: "photoModalBackCaption" }
+      { which: "out", has: hist.hasOutPhoto, who: hist.out_by, takenAt: hist.out_photo_taken_at, captionKey: "photoModalOutCaption" },
+      { which: "back", has: hist.hasBackPhoto, who: hist.back_by, takenAt: hist.back_photo_taken_at, captionKey: "photoModalBackCaption" }
     ].forEach(function (entry) {
       if (!entry.has) return;
       var fig = document.createElement("figure");
@@ -1159,6 +1172,16 @@
       var cap = document.createElement("figcaption");
       cap.textContent = tr(entry.captionKey) + (entry.who ? " — " + entry.who : "");
       fig.appendChild(cap);
+      if (entry.takenAt) {
+        var takenDate = new Date(entry.takenAt);
+        if (!isNaN(takenDate)) {
+          var stampLine = document.createElement("div");
+          stampLine.className = "photo-modal-stamp";
+          stampLine.textContent = tr("photoTakenLabel") + " " + fmtLong(takenDate) + ", " +
+            String(takenDate.getHours()).padStart(2, "0") + ":" + String(takenDate.getMinutes()).padStart(2, "0");
+          fig.appendChild(stampLine);
+        }
+      }
       photoModalGrid.appendChild(fig);
     });
     photoModalEl.hidden = false;
@@ -1191,40 +1214,203 @@
   // previews the chosen image locally (an object URL — nothing is
   // uploaded until the Mark-out/Confirm-back button is pressed) and
   // resets itself whenever the underlying task changes. ----
+  // ---- reading a photo's real creation time from its own EXIF data,
+  // client-side — so "when was this actually taken" isn't just taken on
+  // faith, whether the photo comes from the camera or the library. Only
+  // JPEGs carry EXIF; anything else (PNG, HEIC re-encoded by the browser,
+  // etc.) falls back to the file's own lastModified, clearly labeled as
+  // such since that's a weaker signal (it's when the FILE was last
+  // touched, not necessarily when the photo was taken). Hand-rolled
+  // rather than a library: this only ever needs one tag out of a JPEG's
+  // first ~64KB, not a general-purpose EXIF reader. ----
+  function readExifDate(file) {
+    return new Promise(function (resolve) {
+      if (!file || !/^image\/jpe?g$/i.test(file.type)) { resolve(null); return; }
+      var reader = new FileReader();
+      reader.onerror = function () { resolve(null); };
+      reader.onload = function () {
+        try { resolve(parseExifDate(new DataView(reader.result))); }
+        catch (e) { resolve(null); }
+      };
+      reader.readAsArrayBuffer(file.slice(0, 131072)); // EXIF always sits near the start
+    });
+  }
+  function parseExifDate(view) {
+    if (view.byteLength < 4 || view.getUint16(0) !== 0xFFD8) return null; // not a JPEG
+    var offset = 2;
+    while (offset + 4 <= view.byteLength) {
+      var marker = view.getUint16(offset);
+      if ((marker & 0xFF00) !== 0xFF00) break; // not a real marker — give up
+      var segLen = view.getUint16(offset + 2);
+      if (marker === 0xFFE1 && offset + 4 + 6 <= view.byteLength && view.getUint32(offset + 4) === 0x45786966) {
+        var tiffStart = offset + 4 + 6; // past marker, length, "Exif\0\0"
+        return readExifTiff(view, tiffStart);
+      }
+      offset += 2 + segLen;
+    }
+    return null;
+  }
+  function readExifTiff(view, tiffStart) {
+    var little = view.getUint16(tiffStart) === 0x4949;
+    var ifd0 = tiffStart + view.getUint32(tiffStart + 4, little);
+    var dateStr = null, subIfdOffset = null;
+    var entries = view.getUint16(ifd0, little);
+    for (var i = 0; i < entries; i++) {
+      var e = ifd0 + 2 + i * 12;
+      var tag = view.getUint16(e, little);
+      if (tag === 0x8769) subIfdOffset = tiffStart + view.getUint32(e + 8, little); // Exif SubIFD pointer
+      else if (tag === 0x0132) dateStr = readExifAscii(view, tiffStart, e, little); // plain DateTime, fallback
+    }
+    if (subIfdOffset != null) {
+      var subEntries = view.getUint16(subIfdOffset, little);
+      for (var j = 0; j < subEntries; j++) {
+        var se = subIfdOffset + 2 + j * 12;
+        if (view.getUint16(se, little) === 0x9003) { // DateTimeOriginal — the one that matters
+          dateStr = readExifAscii(view, tiffStart, se, little);
+          break;
+        }
+      }
+    }
+    if (!dateStr) return null;
+    var m = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(dateStr);
+    if (!m) return null;
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  }
+  function readExifAscii(view, tiffStart, entryOffset, little) {
+    var count = view.getUint32(entryOffset + 4, little);
+    var valueOffset = entryOffset + 8;
+    var dataStart = count <= 4 ? valueOffset : tiffStart + view.getUint32(valueOffset, little);
+    var chars = [];
+    for (var k = 0; k < count - 1 && dataStart + k < view.byteLength; k++) chars.push(String.fromCharCode(view.getUint8(dataStart + k)));
+    return chars.join("");
+  }
+
+  // A picked-but-unsubmitted photo has to survive a page reload: the "back"
+  // photo in particular is often picked hours after "out" was confirmed
+  // (someone has to go back outside once the bin's actually been emptied),
+  // long enough for iOS Safari to silently discard and reload the tab in
+  // the background — no beforeunload warning fires for that, the in-memory
+  // File is just gone, and the person never notices their photo wasn't
+  // attached anymore. Stash every picked photo in IndexedDB immediately and
+  // restore it on the next render of that same task/step so it's never
+  // silently lost between picking it and pressing confirm.
+  var pendingDbPromise = null;
+  function pendingDb() {
+    if (!pendingDbPromise) {
+      pendingDbPromise = new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(new Error("no indexedDB")); return; }
+        var req = indexedDB.open("bin-duty-pending", 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore("photos"); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+    }
+    return pendingDbPromise;
+  }
+  function withPendingStore(mode, fn) {
+    return pendingDb().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction("photos", mode);
+        var result = fn(tx.objectStore("photos"));
+        tx.oncomplete = function () { resolve(result && result.result); };
+        tx.onerror = function () { resolve(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  function savePendingPhoto(key, record) { return withPendingStore("readwrite", function (store) { return store.put(record, key); }); }
+  function loadPendingPhoto(key) { return withPendingStore("readonly", function (store) { return store.get(key); }); }
+  function deletePendingPhoto(key) { return withPendingStore("readwrite", function (store) { return store.delete(key); }); }
+
   function makePhotoAttach(prefix) {
     var attachEl = document.getElementById(prefix + "PhotoAttach");
     var input = document.getElementById(prefix + "PhotoInput");
     var thumb = document.getElementById(prefix + "PhotoThumb");
     var clearBtn = document.getElementById(prefix + "PhotoClear");
+    var metaEl = document.getElementById(prefix + "PhotoMeta");
     var file = null;
+    var takenAt = null; // Date, or null when unknown
+    var activeKey = null; // "out:2026-09-25" style IndexedDB key for the task/step this attach currently represents
 
     function reset() {
+      if (activeKey) deletePendingPhoto(activeKey);
+      activeKey = null;
       file = null;
+      takenAt = null;
       input.value = "";
       if (thumb.src) URL.revokeObjectURL(thumb.src);
       thumb.removeAttribute("src");
       thumb.hidden = true;
       clearBtn.hidden = true;
+      metaEl.hidden = true;
+      metaEl.classList.remove("warn");
+    }
+    function renderMeta(date, fromExif) {
+      if (!date) { metaEl.hidden = true; return; }
+      var sameDay = date.toDateString() === new Date().toDateString();
+      var stamp = fmtLong(date) + ", " + String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0");
+      metaEl.textContent = (fromExif ? tr("photoTakenLabel") : tr("photoFileDateLabel")) + " " + stamp + (sameDay ? "" : " " + tr("photoNotTodayNote"));
+      metaEl.classList.toggle("warn", !sameDay);
+      metaEl.hidden = false;
+    }
+    // Called every time this attach becomes the active step for a task
+    // (out photo when out isn't confirmed yet, back photo once it is). If
+    // nothing's picked in this session yet, checks IndexedDB for a photo
+    // that was picked before an in-between reload wiped this session's JS
+    // state, and silently restores it so the person never has to notice.
+    function forTask(dateKey) {
+      var key = dateKey ? prefix + ":" + dateKey : null;
+      activeKey = key;
+      if (!key || file) return;
+      loadPendingPhoto(key).then(function (record) {
+        if (!record || activeKey !== key || file) return; // stale response, or the person already picked something since
+        file = record.blob;
+        takenAt = record.takenAt ? new Date(record.takenAt) : null;
+        if (thumb.src) URL.revokeObjectURL(thumb.src);
+        thumb.src = URL.createObjectURL(record.blob);
+        thumb.hidden = false;
+        clearBtn.hidden = false;
+        renderMeta(takenAt, !!record.fromExif);
+      });
     }
     input.addEventListener("change", function () {
       var f = input.files && input.files[0];
       if (!f) return;
       file = f;
+      takenAt = null;
       if (thumb.src) URL.revokeObjectURL(thumb.src);
       thumb.src = URL.createObjectURL(f);
       thumb.hidden = false;
       clearBtn.hidden = false;
+      metaEl.hidden = true;
+      if (activeKey) savePendingPhoto(activeKey, { blob: f, takenAt: null, fromExif: false });
+      readExifDate(f).then(function (exifDate) {
+        if (file !== f) return; // a different file was picked while this was reading
+        takenAt = exifDate || (f.lastModified ? new Date(f.lastModified) : null);
+        renderMeta(takenAt, !!exifDate);
+        if (activeKey) savePendingPhoto(activeKey, { blob: f, takenAt: takenAt ? takenAt.toISOString() : null, fromExif: !!exifDate });
+      });
     });
     clearBtn.addEventListener("click", function (ev) { ev.preventDefault(); reset(); });
 
     return {
       getFile: function () { return file; },
+      getTakenAt: function () { return takenAt; },
       reset: reset,
+      forTask: forTask,
       setHidden: function (h) { attachEl.hidden = h; }
     };
   }
   var outPhoto = makePhotoAttach("out");
   var backPhoto = makePhotoAttach("back");
+  // A picked photo only lives in memory until Mark-out/Confirm-back is
+  // actually pressed — nothing is uploaded before that. Warn before an
+  // accidental reload or tab close throws it away unsubmitted.
+  window.addEventListener("beforeunload", function (ev) {
+    if (outPhoto.getFile() || backPhoto.getFile()) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  });
 
   function fillNameSelect(select, preferredName) {
     var current = select.value;
@@ -1241,7 +1427,11 @@
   }
 
   function renderTaskForm() {
-    fillNameSelect(outNameSelect, thisWeek.name);
+    // The loaded task's own duty person, not "this calendar week" — same
+    // reasoning as renderTask's dutyPerson: on a Sunday evening the task
+    // that just opened is for Monday, next week's rotation.
+    var outDefault = currentTask ? personForWeek(new Date(currentTask.date_key + "T00:00:00")).name : thisWeek.name;
+    fillNameSelect(outNameSelect, outDefault);
     fillNameSelect(backNameSelect, currentTask && currentTask.out_by);
   }
 
@@ -1328,20 +1518,31 @@
     taskDateLabel.textContent = isTomorrow ? tr("tonightBinsLabel") : fmtLong(date);
     renderBadges(taskBadges, task.codes);
 
-    var dutyPerson = task.out_by || thisWeek.name;
+    // Whoever's turn it is for THIS task's own date — not "this calendar
+    // week" (thisWeek), which is wrong the moment the task's date falls in
+    // a different week bucket than today. That's exactly Sunday evening:
+    // today is still in this week, but the task that just opened is for
+    // Monday, next week's rotation.
+    var dutyPerson = task.out_by || personForWeek(date).name;
     homeDutyAvatar.hidden = false;
     homeDutyAvatar.textContent = initials(dutyPerson);
 
-    // With a local "who am I" set, the name picker is redundant — it's
-    // pre-filled with that person and hidden, leaving one big button.
+    // With a local "who am I" set, the picker defaults to that person —
+    // but stays visible and editable, since whoever's actually doing a
+    // given step (especially "back", often a different housemate than
+    // whoever took it out) is who the reward and achievements go to.
     var meOnRoster = ME && ROSTER.includes(ME);
-    outNameSelect.hidden = meOnRoster;
-    backNameSelect.hidden = meOnRoster;
-    if (meOnRoster) { outNameSelect.value = ME; backNameSelect.value = ME; }
+    if (meOnRoster) {
+      outNameSelect.value = ME;
+      backNameSelect.value = ME;
+      syncSelectTrigger(outNameSelect);
+      syncSelectTrigger(backNameSelect);
+    }
 
     if (!task.out_at) {
       outRow.hidden = false;
       outPhoto.setHidden(false);
+      outPhoto.forTask(task.date_key);
       backRow.hidden = true;
       backPhoto.setHidden(true);
       claimStatus.innerHTML = "";
@@ -1368,6 +1569,7 @@
       outPhoto.setHidden(true);
       backRow.hidden = false;
       backPhoto.setHidden(false);
+      backPhoto.forTask(task.date_key);
       if (!meOnRoster) fillNameSelect(backNameSelect, task.out_by);
       claimStatus.textContent = fmt("outConfirmedBy", { name: task.out_by });
     }
@@ -1464,7 +1666,11 @@
     var form = new FormData();
     form.append("name", outNameSelect.value);
     var outFile = outPhoto.getFile();
-    if (outFile) form.append("photo", outFile);
+    if (outFile) {
+      form.append("photo", outFile);
+      var outTaken = outPhoto.getTakenAt();
+      if (outTaken) form.append("photoTakenAt", outTaken.toISOString());
+    }
     // No content-type header — fetch sets the multipart boundary itself
     // from the FormData body; setting it manually breaks the upload.
     fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
@@ -1494,7 +1700,11 @@
     var form = new FormData();
     form.append("name", backNameSelect.value);
     var backFile = backPhoto.getFile();
-    if (backFile) form.append("photo", backFile);
+    if (backFile) {
+      form.append("photo", backFile);
+      var backTaken = backPhoto.getTakenAt();
+      if (backTaken) form.append("photoTakenAt", backTaken.toISOString());
+    }
     fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
@@ -1502,7 +1712,7 @@
       })
       .then(function (task) {
         backPhoto.reset();
-        celebrate(task.out_by, task.coins + (task.photoBonus || 0));
+        celebrate(task.back_by, task.coins + (task.photoBonus || 0));
         celebrateAchievements(task.unlocked);
         loadLeaderboard();
         // History has to be fresh before loadTask re-renders — the "no
@@ -1627,6 +1837,103 @@
       .catch(function () { notifyStatus.textContent = tr("unsubFailed"); })
       .finally(function () { unsubBtn.disabled = false; });
   });
+
+  // ---- push notifications — same reminders as email, delivered as a real
+  // OS notification on this device instead. Opt-in is the browser's own
+  // permission prompt; there's no server-side account to confirm, a
+  // subscription is useless to anyone but the device that created it. ----
+  var pushStatus = document.getElementById("pushStatus");
+  var pushToggleBtn = document.getElementById("pushToggleBtn");
+  var pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  // iOS Safari can't do push from an ordinary browser tab at all — only
+  // from a page already added to the Home Screen (iOS 16.4+, "standalone"
+  // display mode). Detect that case specifically so the hint is accurate
+  // instead of just failing silently when the button's pressed.
+  var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  var iosNeedsHomeScreen = isIos && !isStandalone;
+
+  function urlBase64ToUint8Array(base64) {
+    var padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    var base64Safe = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base64Safe);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  function swRegistration() {
+    return pushSupported ? navigator.serviceWorker.register("/sw.js") : Promise.reject(new Error("unsupported"));
+  }
+
+  function renderPushUI() {
+    if (iosNeedsHomeScreen) {
+      pushStatus.textContent = tr("pushIosHint");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    if (!pushSupported) {
+      pushStatus.textContent = tr("pushUnsupportedStatus");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    if (Notification.permission === "denied") {
+      pushStatus.textContent = tr("pushDeniedStatus");
+      pushToggleBtn.hidden = true;
+      return;
+    }
+    swRegistration().then(function (reg) {
+      return reg.pushManager.getSubscription();
+    }).then(function (sub) {
+      pushToggleBtn.hidden = false;
+      pushToggleBtn.textContent = sub ? tr("pushDisableBtn") : tr("pushEnableBtn");
+      pushToggleBtn.dataset.subscribed = sub ? "1" : "";
+      pushStatus.textContent = sub ? tr("pushEnabledStatus") : tr("pushDisabledStatus");
+    }).catch(function () {
+      pushStatus.textContent = tr("pushErrorStatus");
+      pushToggleBtn.hidden = true;
+    });
+  }
+
+  pushToggleBtn.addEventListener("click", function () {
+    pushToggleBtn.disabled = true;
+    if (pushToggleBtn.dataset.subscribed) {
+      swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
+        .then(function (sub) {
+          if (!sub) return;
+          var endpoint = sub.endpoint;
+          return sub.unsubscribe().then(function () {
+            return fetch(api("/api/push/unsubscribe"), {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ endpoint: endpoint })
+            });
+          });
+        })
+        .then(renderPushUI)
+        .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
+        .finally(function () { pushToggleBtn.disabled = false; });
+      return;
+    }
+    Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") { renderPushUI(); return; }
+      return fetch(api("/api/push/vapid-public-key"))
+        .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
+        .then(function (data) { return swRegistration().then(function (reg) {
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(data.key) });
+        }); })
+        .then(function (sub) {
+          return fetch(api("/api/push/subscribe"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ subscription: sub.toJSON() })
+          });
+        })
+        .then(renderPushUI);
+    })
+      .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
+      .finally(function () { pushToggleBtn.disabled = false; });
+  });
+
+  if (pushSupported) swRegistration().catch(function () {});
 
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no
@@ -2026,8 +2333,31 @@
   // ---- donate coins ----
   var donateToSelect = document.getElementById("donateToSelect");
   var donateAmountInput = document.getElementById("donateAmountInput");
+  var donateAmountMinus = document.getElementById("donateAmountMinus");
+  var donateAmountPlus = document.getElementById("donateAmountPlus");
   var donateBtn = document.getElementById("donateBtn");
   var donateStatus = document.getElementById("donateStatus");
+
+  // Themed +/- stand-ins for the number input's native spinner (styling
+  // that spinner directly isn't possible in any browser).
+  var donateAmountMin = Number(donateAmountInput.min) || 1;
+  var donateAmountMax = Number(donateAmountInput.max) || Infinity;
+  function syncDonateAmountBtns() {
+    var n = parseInt(donateAmountInput.value, 10);
+    donateAmountMinus.disabled = !isNaN(n) && n <= donateAmountMin;
+    donateAmountPlus.disabled = !isNaN(n) && n >= donateAmountMax;
+  }
+  function stepDonateAmount(delta) {
+    var n = parseInt(donateAmountInput.value, 10);
+    // An empty field starts at the minimum on the first tap, either button.
+    n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
+    donateAmountInput.value = n;
+    syncDonateAmountBtns();
+  }
+  donateAmountMinus.addEventListener("click", function () { stepDonateAmount(-1); });
+  donateAmountPlus.addEventListener("click", function () { stepDonateAmount(1); });
+  donateAmountInput.addEventListener("input", syncDonateAmountBtns);
+  syncDonateAmountBtns();
 
   function renderDonateSelect() {
     var current = donateToSelect.value;

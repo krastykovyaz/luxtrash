@@ -45,11 +45,17 @@ function ensureSchema(db, opts) {
   // photos for that same codes value — a photo only has to outlive its own
   // collection cycle, not the whole house's history.
   var taskCols = db.prepare("PRAGMA table_info(tasks)").all().map(function (c) { return c.name; });
-  ["out_photo", "out_photo_mime", "back_photo", "back_photo_mime"].forEach(function (col) {
+  ["out_photo", "out_photo_mime", "back_photo", "back_photo_mime", "out_photo_taken_at", "back_photo_taken_at"].forEach(function (col) {
     if (taskCols.indexOf(col) === -1) {
       db.exec("ALTER TABLE tasks ADD COLUMN " + col + " TEXT");
     }
   });
+  // How many "still not out" follow-up reminders have gone out for this
+  // task — capped at 2 (see server/index.js's outReminderCron) so someone
+  // who never confirms doesn't get emailed forever.
+  if (taskCols.indexOf("out_reminder_count") === -1) {
+    db.exec("ALTER TABLE tasks ADD COLUMN out_reminder_count INTEGER NOT NULL DEFAULT 0");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS roster (
@@ -76,6 +82,20 @@ function ensureSchema(db, opts) {
   if (accountCols.indexOf("confirm_token") === -1) {
     db.exec("ALTER TABLE accounts ADD COLUMN confirm_token TEXT");
   }
+
+  // Web Push subscriptions — one row per browser/device that's turned
+  // notifications on, keyed by its push endpoint (unique per browser
+  // install). Not tied to a roster name: like email reminders, a push goes
+  // to every subscribed device in the house, not filtered by whose turn it
+  // is — same reasoning as sendDailyReminders in mailer.js.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
 
   var rosterCols = db.prepare("PRAGMA table_info(roster)").all().map(function (c) { return c.name; });
   if (rosterCols.indexOf("occupation") === -1) {

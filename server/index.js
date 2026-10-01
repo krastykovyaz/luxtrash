@@ -19,9 +19,10 @@ const cron = require("node-cron");
 const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
-const { sendDailyReminders, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
-const { LANGS } = require("./i18n");
-const { getCurrentTask, confirmOut, confirmBack } = require("./tasks");
+const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const push = require("./push");
+const { LANGS, t } = require("./i18n");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -321,6 +322,14 @@ function savePhoto(house, dateKey, which, buffer, mime) {
   return filename;
 }
 
+// The client sends the photo's own EXIF/file creation time (ISO string) when
+// it can read one — trust only a real, parseable date, never raw user input.
+function parsePhotoTakenAt(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
 function deletePhotoFile(house, filename) {
   if (!filename) return;
   const file = path.join(taskPhotoDir(house.slug), filename);
@@ -341,7 +350,7 @@ function cleanupOldPhotos(house, codes, beforeDateKey) {
     deletePhotoFile(house, r.back_photo);
   });
   house.db.prepare(
-    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, back_photo = NULL, back_photo_mime = NULL WHERE codes = ? AND date_key < ?"
+    "UPDATE tasks SET out_photo = NULL, out_photo_mime = NULL, out_photo_taken_at = NULL, back_photo = NULL, back_photo_mime = NULL, back_photo_taken_at = NULL WHERE codes = ? AND date_key < ?"
   ).run(codes, beforeDateKey);
 }
 
@@ -362,10 +371,12 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
       let photoBonus = 0;
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "out", req.file.buffer, req.file.mimetype);
-        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ? WHERE date_key = ?")
-          .run(filename, req.file.mimetype, req.params.dateKey);
+        const takenAt = parsePhotoTakenAt(req.body && req.body.photoTakenAt);
+        req.house.db.prepare("UPDATE tasks SET out_photo = ?, out_photo_mime = ?, out_photo_taken_at = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, takenAt, req.params.dateKey);
         row.out_photo = filename;
         row.out_photo_mime = req.file.mimetype;
+        row.out_photo_taken_at = takenAt;
         // Proof photos earn Scrap coins too, same tier as a scan — always
         // credited to whoever marked the bin out (row.out_by, just set by
         // confirmOut above), the same person every other task reward goes to.
@@ -393,20 +404,22 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
       let photoUnlocked = [];
       if (req.file) {
         const filename = savePhoto(req.house, req.params.dateKey, "back", req.file.buffer, req.file.mimetype);
-        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ? WHERE date_key = ?")
-          .run(filename, req.file.mimetype, req.params.dateKey);
+        const takenAt = parsePhotoTakenAt(req.body && req.body.photoTakenAt);
+        req.house.db.prepare("UPDATE tasks SET back_photo = ?, back_photo_mime = ?, back_photo_taken_at = ? WHERE date_key = ?")
+          .run(filename, req.file.mimetype, takenAt, req.params.dateKey);
         row.back_photo = filename;
         row.back_photo_mime = req.file.mimetype;
-        // Same +5 bonus as the out photo — still credited to whoever
-        // marked the bin OUT, even though this photo comes in at the back
-        // step and may be confirmed by someone else entirely.
-        if (row.out_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.out_by, "back"); }
+        row.back_photo_taken_at = takenAt;
+        // Same +5 bonus as the out photo — credited to whoever actually
+        // attached THIS photo, i.e. whoever confirmed it back, which can be
+        // a different person than who took it out.
+        if (row.back_by) { photoBonus = 5; photoUnlocked = coins.afterPhoto(req.house.db, row.back_by, "back"); }
       }
-      // Coins go to whoever took the bin OUT (matches how the leaderboard has
-      // always credited a task — see coin_ledger's backfill in db.js), not
-      // necessarily whoever confirmed it back, since those can be different
-      // people.
-      const unlocked = row.out_by ? coins.afterTaskCompleted(req.house.db, row.out_by) : [];
+      // Coins for completing the task go to whoever actually confirmed it
+      // back — the person who was selected and clicked the button, not
+      // whoever happened to take it out earlier. Those can be different
+      // people, and it's the back step that closes the loop.
+      const unlocked = row.back_by ? coins.afterTaskCompleted(req.house.db, row.back_by) : [];
       res.json({ ...row, unlocked: [...unlocked, ...photoUnlocked], photoBonus });
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message });
@@ -441,7 +454,8 @@ app.get("/api/tasks/leaderboard", (req, res) => {
 app.get("/api/tasks/history", (req, res) => {
   const rows = req.house.db.prepare(
     `SELECT date_key, codes, out_by, out_at, back_by, back_at,
-            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto
+            out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto,
+            out_photo_taken_at, back_photo_taken_at
      FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
   ).all();
   res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));
@@ -646,7 +660,67 @@ app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
   res.status(200).send("OK");
 });
 
+// --- Web Push: same trigger points as the email reminders above, delivered
+// as a real OS notification instead. No confirm-by-email step needed here —
+// the browser's own permission prompt is the opt-in, and a subscription is
+// useless to anyone but the device that created it.
+app.get("/api/push/vapid-public-key", (req, res) => {
+  const key = push.publicKey();
+  if (!key) return res.status(503).json({ error: "Push isn't configured on the server." });
+  res.json({ key });
+});
+
+app.post("/api/push/subscribe", writeLimiter, (req, res) => {
+  const sub = req.body && req.body.subscription;
+  if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+    return res.status(400).json({ error: "Malformed subscription." });
+  }
+  push.saveSubscription(req.house.db, sub);
+  res.status(201).json({ ok: true });
+});
+
+app.post("/api/push/unsubscribe", writeLimiter, (req, res) => {
+  const endpoint = req.body && req.body.endpoint;
+  if (!endpoint) return res.status(400).json({ error: "Missing endpoint." });
+  push.removeSubscription(req.house.db, endpoint);
+  res.status(200).json({ ok: true });
+});
+
 // --- Static frontend ---
+const INDEX_HTML_PATH = path.join(__dirname, "..", "public", "index.html");
+
+function escapeHtmlAttr(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+}
+
+// Social apps (Telegram, WhatsApp, Facebook, iMessage, …) fetch a shared
+// link server-side and read its <meta> tags without ever running the page's
+// JS — so the client-only i18n in app.js can't localize the preview. A link
+// carries the sharer's language (see houseLink() in app.js, which appends
+// it), falling back to the house's own stored language for an older link
+// that predates this, then English.
+app.get("/", (req, res) => {
+  const slug = typeof req.query.h === "string" ? req.query.h.trim().toLowerCase() : "";
+  const house = slug ? houses.getHouse(slug) : null;
+  const queryLang = typeof req.query.lang === "string" ? req.query.lang.trim().toLowerCase() : "";
+  const lang = VALID_LANGS.has(queryLang) ? queryLang : VALID_LANGS.has(house && house.language) ? house.language : "en";
+
+  const title = house ? `${house.name} · Bin Duty` : "Bin Duty";
+  const description = t(lang, "tagline");
+  const origin = `${req.protocol}://${req.get("host")}`;
+  const url = `${origin}${req.originalUrl}`;
+  const image = `${origin}/icon-512.png`;
+
+  let html = fs.readFileSync(INDEX_HTML_PATH, "utf8");
+  html = html
+    .replace(/\{\{HTML_LANG\}\}/g, escapeHtmlAttr(lang))
+    .replace(/\{\{OG_TITLE\}\}/g, escapeHtmlAttr(title))
+    .replace(/\{\{OG_DESCRIPTION\}\}/g, escapeHtmlAttr(description))
+    .replace(/\{\{OG_URL\}\}/g, escapeHtmlAttr(url))
+    .replace(/\{\{OG_IMAGE\}\}/g, escapeHtmlAttr(image));
+  res.type("html").send(html);
+});
+
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const PORT = process.env.PORT || 3000;
@@ -681,11 +755,56 @@ cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, as
     }
     console.log(`Reminder run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendDailyReminderPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    console.log(`Reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
     // An error here must never take the whole process down with it — it's
     // a background job, not a request handler.
     console.error("Reminder run threw:", err.message);
   }
+});
+
+// "Still not out" follow-up: if nobody's confirmed the bins out a few hours
+// after the evening reminder, nudge again — up to twice, 3 hours apart
+// (21:00 and 00:00, following the fixed 18:00 opening time every task
+// already uses). Stops the moment someone confirms out, photo or not; the
+// nudge itself is about getting the bins out, the photo bonus is just the
+// extra incentive worth repeating. Same original-house-only scope as the
+// reminder cron above.
+// getCurrentTask counts a task as current from midnight of the day before,
+// but the first reminder only goes out at 18:00 that day — a follow-up
+// before then would be "still not out" for a task nobody's been told about.
+function outFollowUpEarliest(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y, m - 1, d - 1, 18, 0, 0);
+}
+
+async function runOutFollowUp() {
+  try {
+    const now = new Date();
+    const task = getCurrentTask(defaultDb, now, DEFAULT_FLAT_SCHEDULE);
+    if (!task || task.out_at || task.out_reminder_count >= 2) return;
+    if (now < outFollowUpEarliest(task.date_key)) return;
+    const result = await sendOutFollowUp(defaultDb, currentRoster(defaultDb), originalHouse.slug, task);
+    incrementOutReminderCount(defaultDb, task.date_key, task.codes);
+    console.log(`Out-reminder follow-up: sent ${result.sent}, skipped ${result.skipped}` +
+      (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendOutFollowUpPush(defaultDb, task, originalHouse.language);
+    console.log(`Out-reminder push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
+  } catch (err) {
+    console.error("Out-reminder follow-up threw:", err.message);
+  }
+}
+const DEFAULT_OUT_REMINDER_CRONS = ["0 21 * * *", "0 0 * * *"];
+const OUT_REMINDER_CRONS = (process.env.OUT_REMINDER_CRONS || DEFAULT_OUT_REMINDER_CRONS.join(","))
+  .split(",").map((s) => s.trim()).filter(Boolean);
+OUT_REMINDER_CRONS.forEach((expr, i) => {
+  if (!cron.validate(expr)) {
+    console.error(`OUT_REMINDER_CRONS entry "${expr}" is not a valid cron expression — falling back to "${DEFAULT_OUT_REMINDER_CRONS[i] || DEFAULT_OUT_REMINDER_CRONS[0]}".`);
+  }
+  cron.schedule(cron.validate(expr) ? expr : (DEFAULT_OUT_REMINDER_CRONS[i] || DEFAULT_OUT_REMINDER_CRONS[0]), runOutFollowUp);
 });
 
 // End-of-week heads-up — who's on duty starting tomorrow, sent to
@@ -702,6 +821,9 @@ cron.schedule(cron.validate(WEEK_AHEAD_CRON) ? WEEK_AHEAD_CRON : DEFAULT_WEEK_AH
     const result = await sendWeekAheadNotices(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     console.log(`Week-ahead notice run: sent ${result.sent}, skipped ${result.skipped}` +
       (result.errors.length ? `, ${result.errors.length} error(s): ${JSON.stringify(result.errors)}` : ""));
+    const pushResult = await push.sendWeekAheadPush(defaultDb, currentRoster(defaultDb), originalHouse.language);
+    console.log(`Week-ahead push: sent ${pushResult.sent}, pruned ${pushResult.pruned}` +
+      (pushResult.errors.length ? `, ${pushResult.errors.length} error(s): ${JSON.stringify(pushResult.errors)}` : ""));
   } catch (err) {
     console.error("Week-ahead notice run threw:", err.message);
   }
