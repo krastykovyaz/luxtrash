@@ -462,12 +462,20 @@
   var scanSubview = document.getElementById("scanSubview");
   var sortItSubview = document.getElementById("sortItSubview");
   var chatSubview = document.getElementById("chatSubview");
+  // The page scrolls inside this element, not the window (see the app-shell note in index.html).
+  var pageScroller = document.getElementById("scroller");
+  function scrollPageTop() { pageScroller.scrollTop = 0; }
+  // iOS pans the whole window up to reveal a focused field and can leave it
+  // panned after the keyboard closes; the window itself never needs to scroll.
+  document.addEventListener("focusout", function () {
+    setTimeout(function () { if (window.scrollY) window.scrollTo(0, 0); }, 60);
+  });
   function showHomeSubview(which) {
     homeDashboard.hidden = which !== "dashboard";
     scanSubview.hidden = which !== "scan";
     sortItSubview.hidden = which !== "sortit";
     chatSubview.hidden = which !== "chat";
-    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    scrollPageTop();
     if (which === "chat") chatOpened(); else chatClosed();
   }
   document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
@@ -492,7 +500,7 @@
     // "Full calendar" on another tab) always lands on its dashboard, never
     // wherever a Scan/Sort It sub-view was left open.
     if (view === "home") showHomeSubview("dashboard");
-    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    scrollPageTop();
   }
   document.querySelectorAll(".tab-btn").forEach(function (btn) {
     btn.addEventListener("click", function () { showView(btn.getAttribute("data-goto")); });
@@ -1916,7 +1924,7 @@
   // thread. New messages and late-loading pictures only pull the page down
   // while this holds, so scrolling up to read history is never yanked away.
   var chatStick = true;
-  function chatToBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
+  function chatToBottom() { pageScroller.scrollTop = pageScroller.scrollHeight; }
   // Layout keeps moving for a moment after a send (the textarea shrinks, a
   // keyboard animates, a picture decodes), so pin once now and again as it settles.
   function chatPinSoon() {
@@ -1925,9 +1933,9 @@
     requestAnimationFrame(chatToBottom);
     [150, 400].forEach(function (ms) { setTimeout(function () { if (chatStick) chatToBottom(); }, ms); });
   }
-  window.addEventListener("scroll", function () {
+  pageScroller.addEventListener("scroll", function () {
     if (chatSubview.offsetParent === null) return;
-    chatStick = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 140;
+    chatStick = pageScroller.clientHeight + pageScroller.scrollTop >= pageScroller.scrollHeight - 140;
   }, { passive: true });
 
   function chatToken() {
