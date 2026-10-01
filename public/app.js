@@ -2349,16 +2349,24 @@
   // that spinner directly isn't possible in any browser).
   var donateAmountMin = Number(donateAmountInput.min) || 1;
   var donateAmountMax = Number(donateAmountInput.max) || Infinity;
+  // Empty is the real starting state: + takes it to the minimum, and − from
+  // the minimum takes it back to empty, so the two buttons mirror each other
+  // (the amount itself still can't go below the minimum — empty isn't an
+  // amount, it's "nothing entered yet").
   function syncDonateAmountBtns() {
     var n = parseInt(donateAmountInput.value, 10);
-    donateAmountMinus.disabled = !isNaN(n) && n <= donateAmountMin;
+    donateAmountMinus.disabled = isNaN(n);
     donateAmountPlus.disabled = !isNaN(n) && n >= donateAmountMax;
   }
   function stepDonateAmount(delta) {
     var n = parseInt(donateAmountInput.value, 10);
-    // An empty field starts at the minimum on the first tap, either button.
-    n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
-    donateAmountInput.value = n;
+    if (delta > 0) {
+      n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + 1));
+      donateAmountInput.value = n;
+    } else if (!isNaN(n)) {
+      n = Math.min(n, donateAmountMax + 1) - 1;
+      donateAmountInput.value = n >= donateAmountMin ? n : "";
+    }
     syncDonateAmountBtns();
   }
   donateAmountMinus.addEventListener("click", function () { stepDonateAmount(-1); });
