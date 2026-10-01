@@ -64,6 +64,49 @@
       if (Array.isArray(saved)) MY_HOUSES = saved.filter(function (h) { return h && h.slug; });
     } catch (e) {}
   })();
+  // ---- opening from a notification. An installed iPhone web app launches at
+  // its start page and ignores the address a tapped notification carries, so
+  // the service worker leaves the destination in Cache Storage and the page
+  // collects it itself: on launch, when brought back to the front, and when
+  // the worker pings it (see sw.js). ----
+  var OPEN_INTENT_CACHE = "bd-open-intent", OPEN_INTENT_KEY = "/__open-intent";
+  function readOpenIntent() {
+    if (!window.caches) return Promise.resolve(null);
+    return caches.open(OPEN_INTENT_CACHE).then(function (c) {
+      return c.match(OPEN_INTENT_KEY).then(function (r) {
+        if (!r) return null;
+        return r.json().then(function (d) {
+          if (d && d.url && Date.now() - d.at <= 120000) return d;
+          return c.delete(OPEN_INTENT_KEY).then(function () { return null; }); // too old to be the tap that just happened
+        });
+      });
+    }).catch(function () { return null; });
+  }
+  function clearOpenIntent() {
+    if (!window.caches) return Promise.resolve();
+    return caches.open(OPEN_INTENT_CACHE).then(function (c) { return c.delete(OPEN_INTENT_KEY); }).catch(function () {});
+  }
+  function intentHouse(d) {
+    try { return new URL(d.url).searchParams.get("h") || ""; } catch (e) { return null; }
+  }
+  // A notification for another house than the one open (or for none, if the
+  // app launched at the bare start page) means go there; the same house is
+  // handled further down, once the chat exists.
+  var intentRedirected = readOpenIntent().then(function (d) {
+    if (!d) return false;
+    var h = intentHouse(d);
+    if (h === null || h === HOUSE_SLUG) return false;
+    return clearOpenIntent().then(function () { location.replace(d.url); return true; });
+  });
+  // An installed app that opens at the bare start page has no house in its
+  // address; take it straight to the one used last on this device.
+  if (!HOUSE_SLUG && MY_HOUSES.length &&
+      (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true)) {
+    intentRedirected.then(function (redirected) {
+      if (!redirected) location.replace(location.pathname + "?h=" + encodeURIComponent(MY_HOUSES[0].slug));
+    });
+  }
+
   function rememberHouse(slug, name) {
     // slug === "" is the original house, a legitimate value here — not
     // "nothing to remember" — so this only guards against a truly missing
@@ -2225,6 +2268,23 @@
     else chatRefreshUnread();
     // Tapping a chat notification lands here with ?chat=1 — open the chat,
     // then drop the flag so a reload doesn't keep reopening it.
+    // The same, when the app was already open or launched at its start page:
+    // pick up what the notification left behind.
+    var chatOpenFromIntent = function () {
+      readOpenIntent().then(function (d) {
+        if (!d || intentHouse(d) !== HOUSE_SLUG) return;
+        var u; try { u = new URL(d.url); } catch (e) { return; }
+        clearOpenIntent();
+        if (u.searchParams.get("chat") === "1") { showView("home"); showHomeSubview("chat"); }
+      });
+    };
+    chatOpenFromIntent();
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) chatOpenFromIntent(); });
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", function (ev) {
+        if (ev.data && ev.data.type === "open-intent") chatOpenFromIntent();
+      });
+    }
     var wantChat = new URLSearchParams(location.search);
     if (wantChat.get("chat") === "1") {
       showView("home");
