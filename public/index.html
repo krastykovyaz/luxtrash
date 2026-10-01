@@ -225,8 +225,8 @@
   .qty-btn:active:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
   .qty-btn:disabled { color: var(--ink-faint); cursor: default; }
   .qty-input {
-    width: 54px; min-width: 0; text-align: center; font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
-    color: var(--ink); background: transparent; border: none; padding: 9px 2px;
+    width: 68px; min-width: 0; text-align: center; font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--ink); background: transparent; border: none; padding: 0 4px;
     -moz-appearance: textfield;
   }
   .qty-input::-webkit-outer-spin-button, .qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -681,6 +681,15 @@
 
   /* ---- donate / me picker ---- */
   #meCard .claim-row, #donateCard .claim-row { align-items: center; }
+  /* Two tidy rows on a shared 40px height and 6px corner: who to give to on
+     top (full width, so no name is ever truncated), then the amount stepper
+     and GIVE side by side beneath it. Capped so it doesn't sprawl on a wide
+     card. */
+  #donateCard .claim-row { gap: 8px; max-width: 420px; }
+  #donateCard .select-trigger { flex: 1 1 100%; min-width: 0; height: 40px; padding-block: 0; }
+  #donateCard .qty-stepper { flex: 1 1 0; min-width: 0; height: 40px; }
+  #donateCard .qty-input { flex: 1 1 0; width: auto; }
+  #donateCard #donateBtn { flex: none; height: 40px; min-width: 88px; padding: 0 18px; border-radius: 6px; }
   .profile-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
   .profile-avatar { width: 54px; height: 54px; font-size: 22px; border-width: 1px; font-family: 'Bebas Neue', sans-serif; }
   .profile-id { flex: 1; min-width: 0; }
