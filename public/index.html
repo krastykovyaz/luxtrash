@@ -500,7 +500,10 @@
   .chat-id b { font-weight: 700; }
   /* The screen fills the space between the header and the tab bar, so the
      composer rests just above the tab bar even when the thread is short. */
-  #chatSubview:not([hidden]) { display: flex; flex-direction: column; gap: 10px; min-height: calc(100vh - 184px); min-height: calc(100dvh - 184px); }
+  #chatSubview:not([hidden]) { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; }
+  /* The chat fills the screen under the header, so the message box rests on the bottom edge. */
+  body.in-chat .wrap { min-height: 100%; }
+  body.in-chat .chat-composer { padding-bottom: 4px; }
   .chat-thread { flex: 1 1 auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 160px; }
   .chat-empty { margin: auto; text-align: center; font-size: 13px; line-height: 1.5; color: var(--ink-faint); max-width: 30ch; padding: 24px 0; }
   .chat-day { align-self: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 8px 0 2px; }
