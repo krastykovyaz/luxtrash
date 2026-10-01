@@ -64,6 +64,49 @@
       if (Array.isArray(saved)) MY_HOUSES = saved.filter(function (h) { return h && h.slug; });
     } catch (e) {}
   })();
+  // ---- opening from a notification. An installed iPhone web app launches at
+  // its start page and ignores the address a tapped notification carries, so
+  // the service worker leaves the destination in Cache Storage and the page
+  // collects it itself: on launch, when brought back to the front, and when
+  // the worker pings it (see sw.js). ----
+  var OPEN_INTENT_CACHE = "bd-open-intent", OPEN_INTENT_KEY = "/__open-intent";
+  function readOpenIntent() {
+    if (!window.caches) return Promise.resolve(null);
+    return caches.open(OPEN_INTENT_CACHE).then(function (c) {
+      return c.match(OPEN_INTENT_KEY).then(function (r) {
+        if (!r) return null;
+        return r.json().then(function (d) {
+          if (d && d.url && Date.now() - d.at <= 120000) return d;
+          return c.delete(OPEN_INTENT_KEY).then(function () { return null; }); // too old to be the tap that just happened
+        });
+      });
+    }).catch(function () { return null; });
+  }
+  function clearOpenIntent() {
+    if (!window.caches) return Promise.resolve();
+    return caches.open(OPEN_INTENT_CACHE).then(function (c) { return c.delete(OPEN_INTENT_KEY); }).catch(function () {});
+  }
+  function intentHouse(d) {
+    try { return new URL(d.url).searchParams.get("h") || ""; } catch (e) { return null; }
+  }
+  // A notification for another house than the one open (or for none, if the
+  // app launched at the bare start page) means go there; the same house is
+  // handled further down, once the chat exists.
+  var intentRedirected = readOpenIntent().then(function (d) {
+    if (!d) return false;
+    var h = intentHouse(d);
+    if (h === null || h === HOUSE_SLUG) return false;
+    return clearOpenIntent().then(function () { location.replace(d.url); return true; });
+  });
+  // An installed app that opens at the bare start page has no house in its
+  // address; take it straight to the one used last on this device.
+  if (!HOUSE_SLUG && MY_HOUSES.length &&
+      (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true)) {
+    intentRedirected.then(function (redirected) {
+      if (!redirected) location.replace(location.pathname + "?h=" + encodeURIComponent(MY_HOUSES[0].slug));
+    });
+  }
+
   function rememberHouse(slug, name) {
     // slug === "" is the original house, a legitimate value here — not
     // "nothing to remember" — so this only guards against a truly missing
@@ -425,12 +468,13 @@
     sortItSubview.hidden = which !== "sortit";
     chatSubview.hidden = which !== "chat";
     window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    if (which === "chat") chatOpened(); else chatClosed();
   }
   document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
   document.getElementById("sortItLaunchBtn").addEventListener("click", function () { showHomeSubview("sortit"); });
   document.getElementById("scanBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
   document.getElementById("sortItBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
-  // Anonymous chat — not built yet; the button opens a "coming soon" screen.
+  // Anonymous house chat — see the chat section further down.
   document.getElementById("chatEntryBtn").addEventListener("click", function () { showHomeSubview("chat"); });
   document.getElementById("chatBackBtn").addEventListener("click", function () { showHomeSubview("dashboard"); });
 
@@ -473,6 +517,11 @@
       var val = tr(key);
       if (val != null) el.placeholder = val;
     });
+    document.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+      var val = tr(el.getAttribute("data-i18n-title"));
+      if (val != null) { el.title = val; el.setAttribute("aria-label", val); }
+    });
+    chatRerender();
 
     renderLangRow();
     var todayLabelEl = document.getElementById("todayLabel");
@@ -1838,6 +1887,426 @@
       .finally(function () { unsubBtn.disabled = false; });
   });
 
+  // ---- anonymous house chat. One thread per house; everyone posts under a
+  // codename the server derives per device per week. This device's only
+  // identity is a random token it makes up for itself (kept per house), so
+  // there's no name, login or roster entry anywhere in the chat. ----
+  var chatThread = document.getElementById("chatThread");
+  var chatInput = document.getElementById("chatInput");
+  var chatSendBtn = document.getElementById("chatSendBtn");
+  var chatPhotoInput = document.getElementById("chatPhotoInput");
+  var chatStatus = document.getElementById("chatStatus");
+  var chatReplyBar = document.getElementById("chatReplyBar");
+  var chatReplyText = document.getElementById("chatReplyText");
+  var chatAttachBar = document.getElementById("chatAttachBar");
+  var chatAttachThumb = document.getElementById("chatAttachThumb");
+  var chatAttachText = document.getElementById("chatAttachText");
+  var chatLightbox = document.getElementById("chatLightbox");
+  var chatLightboxImg = document.getElementById("chatLightboxImg");
+  var chatMeName = document.getElementById("chatMeName");
+  var chatUnreadEl = document.getElementById("chatUnread");
+  var chatMessages = [];
+  var chatMe = null;
+  var chatSignature = null; // null = nothing drawn yet, so an empty chat still gets its placeholder
+  var chatReplyTo = null;     // {id, codename}
+  var chatPhotoBlob = null;   // already resized, ready to send
+  var chatSending = false;
+  var chatTimer = null;
+  // True while the reader is at (or has been taken to) the bottom of the
+  // thread. New messages and late-loading pictures only pull the page down
+  // while this holds, so scrolling up to read history is never yanked away.
+  var chatStick = true;
+  function chatToBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
+  // Layout keeps moving for a moment after a send (the textarea shrinks, a
+  // keyboard animates, a picture decodes), so pin once now and again as it settles.
+  function chatPinSoon() {
+    chatStick = true;
+    chatToBottom();
+    requestAnimationFrame(chatToBottom);
+    [150, 400].forEach(function (ms) { setTimeout(function () { if (chatStick) chatToBottom(); }, ms); });
+  }
+  window.addEventListener("scroll", function () {
+    if (chatSubview.offsetParent === null) return;
+    chatStick = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 140;
+  }, { passive: true });
+
+  function chatToken() {
+    var key = houseKey("binDutyChatToken");
+    var t = "";
+    try { t = localStorage.getItem(key) || ""; } catch (e) {}
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) {
+      var bytes = new Uint8Array(18);
+      (window.crypto || window.msCrypto).getRandomValues(bytes);
+      t = btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      try { localStorage.setItem(key, t); } catch (e) {}
+    }
+    return t;
+  }
+  function chatFetch(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "x-chat-token": chatToken() }, opts.headers || {});
+    return fetch(api(path), opts).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (e) { throw new Error(e.error || "failed"); });
+      return r.json();
+    });
+  }
+  function chatColor(hue) { return "hsl(" + hue + " 62% 72%)"; }
+  function chatClock(iso) {
+    var d = new Date(iso);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  function chatSnippet(q) { return q.snippet || (q.hasPhoto ? "\u{1F4F7} " + tr("chatPhoto") : ""); }
+
+  // Each message's DOM is built once and kept (chatEls). A redraw only
+  // re-attaches the existing elements, adds the new ones and patches changed
+  // reactions — so pictures already on screen are never rebuilt, which is what
+  // used to shift the page under you every time anything changed.
+  var chatEls = {};
+
+  function chatBuildReacts(m) {
+    var reacts = document.createElement("div");
+    reacts.className = "chat-reacts";
+    m.reactions.forEach(function (r) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chat-react" + (r.count ? " has" : "") + (r.mine ? " on" : "");
+      b.setAttribute("aria-pressed", r.mine ? "true" : "false");
+      b.textContent = r.emoji + (r.count ? " " + r.count : "");
+      b.addEventListener("click", function () { chatReact(m.id, r.emoji); });
+      reacts.appendChild(b);
+    });
+    return reacts;
+  }
+  function chatReactSig(m) { return m.reactions.map(function (r) { return r.count + (r.mine ? "m" : ""); }).join(""); }
+  function chatMsgSig(m) { return m.id + ":" + (m.mine ? 1 : 0) + ":" + (m.replyTo ? (m.replyTo.deleted ? "d" : m.replyTo.id) : "") + ":" + (m.hasPhoto ? "p" : m.photoExpired ? "x" : ""); }
+
+  function chatBuildMsg(m) {
+    var el = document.createElement("div");
+    el.className = "chat-msg" + (m.mine ? " mine" : "");
+    el.dataset.id = m.id;
+
+    var meta = document.createElement("div");
+    meta.className = "chat-meta";
+    var name = document.createElement("span");
+    name.className = "chat-name";
+    name.style.color = chatColor(m.hue);
+    name.textContent = m.codename + (m.mine ? " (" + tr("chatYou") + ")" : "");
+    var time = document.createElement("time");
+    time.className = "chat-time";
+    time.textContent = chatClock(m.createdAt);
+    meta.appendChild(name);
+    meta.appendChild(time);
+    el.appendChild(meta);
+
+    if (m.replyTo) {
+      var q = document.createElement("button");
+      q.type = "button";
+      q.className = "chat-quote" + (m.replyTo.deleted ? " gone" : "");
+      if (m.replyTo.deleted) {
+        q.textContent = tr("chatOriginalGone");
+        q.disabled = true;
+      } else {
+        var qn = document.createElement("b");
+        qn.style.color = chatColor(m.replyTo.hue);
+        qn.textContent = m.replyTo.codename;
+        q.appendChild(qn);
+        q.appendChild(document.createTextNode(chatSnippet(m.replyTo)));
+        q.addEventListener("click", function () { chatJumpTo(m.replyTo.id); });
+      }
+      el.appendChild(q);
+    }
+    if (m.body) {
+      var body = document.createElement("div");
+      body.className = "chat-body";
+      body.textContent = m.body;
+      el.appendChild(body);
+    }
+    if (m.hasPhoto) {
+      var img = document.createElement("img");
+      img.className = "chat-pic";
+      img.alt = tr("chatPhoto");
+      img.addEventListener("load", function () { if (chatStick) chatToBottom(); });
+      img.src = api("/api/chat/photo/" + m.id);
+      img.addEventListener("click", function () { chatLightboxImg.src = img.src; chatLightbox.hidden = false; });
+      el.appendChild(img);
+    }
+    if (m.photoExpired) {
+      var gone = document.createElement("div");
+      gone.className = "chat-pic-gone";
+      gone.textContent = "\u{1F5BC} " + tr("chatPhotoExpired");
+      el.appendChild(gone);
+    }
+    var actions = document.createElement("div");
+    actions.className = "chat-actions";
+    var reply = document.createElement("button");
+    reply.type = "button"; reply.className = "chat-act";
+    reply.textContent = tr("chatReply");
+    reply.addEventListener("click", function () { chatSetReply(m); });
+    actions.appendChild(reply);
+    if (m.mine) {
+      var del = document.createElement("button");
+      del.type = "button"; del.className = "chat-act danger";
+      del.textContent = tr("chatDelete");
+      del.addEventListener("click", function () {
+        chatFetch("/api/chat/messages/" + m.id, { method: "DELETE" }).then(chatRefresh).catch(function () {});
+      });
+      actions.appendChild(del);
+    }
+    actions.appendChild(chatBuildReacts(m));
+    el.appendChild(actions);
+    return el;
+  }
+
+  function chatRender() {
+    var stick = chatStick;
+    chatThread.textContent = "";
+    if (!chatMessages.length) {
+      chatEls = {};
+      var empty = document.createElement("div");
+      empty.className = "chat-empty";
+      empty.textContent = tr("chatEmpty");
+      chatThread.appendChild(empty);
+      return;
+    }
+    var live = {};
+    var lastDay = "";
+    chatMessages.forEach(function (m) {
+      var day = dateKeyOf(new Date(m.createdAt));
+      if (day !== lastDay) {
+        lastDay = day;
+        var sep = document.createElement("div");
+        sep.className = "chat-day";
+        sep.textContent = day === dateKeyOf(new Date()) ? tr("todayLabel") : fmtLong(new Date(m.createdAt));
+        chatThread.appendChild(sep);
+      }
+      var sig = chatMsgSig(m), rsig = chatReactSig(m), entry = chatEls[m.id];
+      if (!entry || entry.sig !== sig) {
+        entry = chatEls[m.id] = { el: chatBuildMsg(m), sig: sig, rsig: rsig };
+      } else if (entry.rsig !== rsig) {
+        var old = entry.el.querySelector(".chat-reacts");
+        old.parentNode.replaceChild(chatBuildReacts(m), old);
+        entry.rsig = rsig;
+      }
+      live[m.id] = true;
+      chatThread.appendChild(entry.el);
+    });
+    Object.keys(chatEls).forEach(function (id) { if (!live[id]) delete chatEls[id]; });
+    if (stick) chatToBottom();
+  }
+  function chatRerender() { chatSignature = null; chatEls = {}; if (chatMe) chatRender(); }
+
+  function chatReact(id, emoji) {
+    chatFetch("/api/chat/messages/" + id + "/reaction", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ emoji: emoji })
+    }).then(function (d) {
+      // Look the message up now — the 5s refresh swaps in fresh objects without
+      // redrawing, so anything captured when the button was drawn can be stale.
+      var current = chatMessages.filter(function (x) { return x.id === id; })[0];
+      if (current) { current.reactions = d.reactions; chatSignature = null; chatRender(); }
+    }).catch(function () { chatRefresh(); });
+  }
+
+  function chatJumpTo(id) {
+    var el = chatThread.querySelector('.chat-msg[data-id="' + id + '"]');
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  }
+  function chatSetReply(m) {
+    chatReplyTo = { id: m.id, codename: m.codename };
+    chatReplyText.textContent = fmt("chatReplyingTo", { name: m.codename }) + " — " + (m.body ? chatSnippet({ snippet: m.body.slice(0, 60) }) : "\u{1F4F7} " + tr("chatPhoto"));
+    chatReplyBar.hidden = false;
+    chatInput.focus();
+  }
+  function chatClearReply() { chatReplyTo = null; chatReplyBar.hidden = true; }
+  document.getElementById("chatReplyCancel").addEventListener("click", chatClearReply);
+
+  function chatRefresh() {
+    return chatFetch("/api/chat/messages").then(function (data) {
+      chatMe = data.me;
+      chatMeName.textContent = data.me.codename;
+      chatMeName.style.color = chatColor(data.me.hue);
+      var sig = data.messages.map(function (m) {
+        return m.id + ":" + (m.replyTo && m.replyTo.deleted ? "d" : "") + (m.photoExpired ? "x" : "") + ":" + m.reactions.map(function (r) { return r.count + (r.mine ? "m" : ""); }).join("");
+      }).join(",");
+      chatMessages = data.messages;
+      if (sig !== chatSignature) { chatSignature = sig; chatRender(); }
+      chatMarkSeen();
+      if (chatStatus.textContent === tr("chatLoadFailed")) chatStatus.textContent = "";
+    }).catch(function () { chatStatus.textContent = tr("chatLoadFailed"); });
+  }
+
+  // Unread badge on the Home button: messages from other devices since this
+  // one last had the chat open.
+  function chatSeenKey() { return houseKey("binDutyChatSeen"); }
+  function chatMarkSeen() {
+    var top = chatMessages.length ? chatMessages[chatMessages.length - 1].id : 0;
+    try { localStorage.setItem(chatSeenKey(), String(top)); } catch (e) {}
+    chatUnreadEl.hidden = true;
+  }
+  function chatRefreshUnread() {
+    var seen = 0;
+    try { seen = parseInt(localStorage.getItem(chatSeenKey()), 10) || 0; } catch (e) {}
+    chatFetch("/api/chat/unread?after=" + seen).then(function (d) {
+      chatUnreadEl.textContent = d.unread > 99 ? "99+" : String(d.unread);
+      chatUnreadEl.hidden = !d.unread;
+    }).catch(function () {});
+  }
+
+  function chatOpened(quiet) {
+    // quiet: wide screens show the chat inline with everything else, so it
+    // loads in place without scrolling the page away from where you are.
+    chatStick = !quiet;
+    chatRefresh().then(function () { if (!quiet) chatToBottom(); });
+    if (!chatTimer) chatTimer = setInterval(function () {
+      if (document.hidden || chatSubview.offsetParent === null) return;
+      chatRefresh();
+    }, 5000);
+  }
+  function chatClosed() {
+    if (chatTimer) { clearInterval(chatTimer); chatTimer = null; }
+    if (chatMe) chatRefreshUnread();
+  }
+  setInterval(function () {
+    if (!document.hidden && !homeDashboard.hidden && homeDashboard.offsetParent !== null) chatRefreshUnread();
+  }, 60000);
+
+  // Pictures are shrunk and re-encoded in the browser before they leave the
+  // device: it keeps uploads small, and drawing to a canvas drops every bit
+  // of camera metadata (GPS position, device model), which matters in a chat
+  // that promises anonymity.
+  function chatShrink(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var max = 1280, scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error("encode")); }, "image/jpeg", 0.82);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("decode")); };
+      img.src = url;
+    });
+  }
+  function chatClearPhoto() {
+    chatPhotoBlob = null;
+    chatPhotoInput.value = "";
+    if (chatAttachThumb.src) URL.revokeObjectURL(chatAttachThumb.src);
+    chatAttachThumb.removeAttribute("src");
+    chatAttachBar.hidden = true;
+  }
+  chatPhotoInput.addEventListener("change", function () {
+    var f = chatPhotoInput.files && chatPhotoInput.files[0];
+    if (!f) return;
+    chatStatus.textContent = "";
+    chatShrink(f).then(function (blob) {
+      chatPhotoBlob = blob;
+      if (chatAttachThumb.src) URL.revokeObjectURL(chatAttachThumb.src);
+      chatAttachThumb.src = URL.createObjectURL(blob);
+      chatAttachText.textContent = tr("chatPhoto") + " · " + Math.max(1, Math.round(blob.size / 1024)) + " KB";
+      chatAttachBar.hidden = false;
+      chatSyncSend();
+    }).catch(function () { chatClearPhoto(); chatStatus.textContent = tr("chatBadPhoto"); });
+  });
+  document.getElementById("chatAttachClear").addEventListener("click", function () { chatClearPhoto(); chatSyncSend(); });
+
+  function chatSyncSend() { chatSendBtn.disabled = chatSending || (!chatInput.value.trim() && !chatPhotoBlob); }
+  function chatGrow() {
+    chatInput.style.height = "auto";
+    var border = chatInput.offsetHeight - chatInput.clientHeight; // scrollHeight leaves the border out
+    chatInput.style.height = Math.min(chatInput.scrollHeight + border, 120) + "px";
+  }
+  chatInput.addEventListener("input", function () { chatGrow(); chatSyncSend(); });
+  chatInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); chatSend(); }
+  });
+  // Tapping a button normally steals focus from the textarea, which drops the
+  // keyboard and makes the page resize and jump. Keeping focus where it is
+  // also means you can keep typing straight after sending.
+  chatSendBtn.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+  chatSendBtn.addEventListener("click", chatSend);
+  chatSyncSend();
+
+  function chatSend() {
+    var text = chatInput.value.trim();
+    if (chatSending || (!text && !chatPhotoBlob)) return;
+    chatSending = true;
+    chatSyncSend();
+    chatStatus.textContent = "";
+    var form = new FormData();
+    form.append("body", text);
+    if (chatReplyTo) form.append("replyTo", String(chatReplyTo.id));
+    if (chatPhotoBlob) form.append("photo", chatPhotoBlob, "photo.jpg");
+    chatFetch("/api/chat/messages", { method: "POST", body: form })
+      .then(function () {
+        chatInput.value = "";
+        chatGrow();
+        chatClearReply();
+        chatClearPhoto();
+        return chatRefresh();
+      })
+      .then(function () { chatPinSoon(); })
+      .catch(function (e) { chatStatus.textContent = e.message && e.message !== "failed" ? e.message : tr("chatFailed"); })
+      .then(function () { chatSending = false; chatSyncSend(); });
+  }
+
+  chatLightbox.addEventListener("click", function () { chatLightbox.hidden = true; chatLightboxImg.removeAttribute("src"); });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !chatLightbox.hidden) { chatLightbox.hidden = true; chatLightboxImg.removeAttribute("src"); }
+  });
+  if (HOUSE_SLUG) {
+    if (window.matchMedia("(min-width: 900px)").matches) chatOpened(true);
+    else chatRefreshUnread();
+    // Tapping a chat notification lands here with ?chat=1 — open the chat,
+    // then drop the flag so a reload doesn't keep reopening it.
+    // The same, when the app was already open or launched at its start page:
+    // pick up what the notification left behind.
+    var chatOpenFromIntent = function () {
+      readOpenIntent().then(function (d) {
+        if (!d || intentHouse(d) !== HOUSE_SLUG) return;
+        var u; try { u = new URL(d.url); } catch (e) { return; }
+        clearOpenIntent();
+        if (u.searchParams.get("chat") === "1") { showView("home"); showHomeSubview("chat"); }
+      });
+    };
+    chatOpenFromIntent();
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) chatOpenFromIntent(); });
+    // iOS doesn't always fire visibilitychange when an installed app is
+    // brought back by a notification; these cover the other ways it wakes.
+    window.addEventListener("focus", chatOpenFromIntent);
+    window.addEventListener("pageshow", chatOpenFromIntent);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", function (ev) {
+        if (ev.data && ev.data.type === "open-intent") chatOpenFromIntent();
+      });
+    }
+    // An update reloaded the page while the chat was open — put it back.
+    try {
+      if (sessionStorage.getItem("binDutyResumeChat") === "1") {
+        sessionStorage.removeItem("binDutyResumeChat");
+        showView("home");
+        showHomeSubview("chat");
+      }
+    } catch (e) {}
+    var wantChat = new URLSearchParams(location.search);
+    if (wantChat.get("chat") === "1") {
+      showView("home");
+      showHomeSubview("chat");
+      wantChat.delete("chat");
+      var cleaned = location.pathname + (wantChat.toString() ? "?" + wantChat.toString() : "");
+      try { history.replaceState(null, "", cleaned); } catch (e) {}
+    }
+  }
+
   // ---- push notifications — same reminders as email, delivered as a real
   // OS notification on this device instead. Opt-in is the browser's own
   // permission prompt; there's no server-side account to confirm, a
@@ -1849,7 +2318,10 @@
   // from a page already added to the Home Screen (iOS 16.4+, "standalone"
   // display mode). Detect that case specifically so the hint is accurate
   // instead of just failing silently when the button's pressed.
-  var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  // iPadOS reports itself as a Mac; a touch-capable "Mac" is an iPad.
+  var isIpad = /ipad/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  var isIos = isIpad || /iphone|ipod/i.test(navigator.userAgent);
+  var pushNote = document.getElementById("pushNote");
   var isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   var iosNeedsHomeScreen = isIos && !isStandalone;
 
@@ -1866,56 +2338,87 @@
     return pushSupported ? navigator.serviceWorker.register("/sw.js") : Promise.reject(new Error("unsupported"));
   }
 
-  function renderPushUI() {
+  // The switch is always on screen. Where push can't work on this page it
+  // stays off and disabled, with the status line saying why — hiding it
+  // just left people looking for a control that wasn't there.
+  var pushChatBtn = document.getElementById("pushChatToggleBtn");
+  function setPushChat(on, usable) {
+    pushChatBtn.setAttribute("aria-checked", on ? "true" : "false");
+    pushChatBtn.setAttribute("aria-label", tr("pushChatLabel"));
+    pushChatBtn.disabled = !usable;
+  }
+  // Chat notifications ride on this device's push subscription, so the
+  // switch only works once push itself is on; otherwise it stays off and greyed.
+  function loadPushChat(sub) {
+    setPushChat(false, false);
+    if (!sub) return;
+    fetch(api("/api/push/chat?endpoint=" + encodeURIComponent(sub.endpoint)))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { setPushChat(!!d.enabled, true); })
+      .catch(function () { setPushChat(false, true); });
+  }
+  pushChatBtn.addEventListener("click", function () {
+    var turningOn = pushChatBtn.getAttribute("aria-checked") !== "true";
+    pushChatBtn.disabled = true;
+    swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (!sub) throw new Error("not subscribed");
+        return chatFetch("/api/push/chat", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ endpoint: sub.endpoint, enabled: turningOn })
+        });
+      })
+      .then(function (d) { setPushChat(!!d.enabled, true); })
+      .catch(function () { renderPushUI(true); });
+  });
+
+  function renderPushUI(failed) {
+    function setSwitch(on, usable, statusKey) {
+      if (!usable || !on) setPushChat(false, false);
+      pushToggleBtn.setAttribute("aria-checked", on ? "true" : "false");
+      pushToggleBtn.setAttribute("aria-label", on ? tr("pushDisableBtn") : tr("pushEnableBtn"));
+      pushToggleBtn.dataset.subscribed = on ? "1" : "";
+      pushToggleBtn.disabled = !usable;
+      pushStatus.textContent = tr(statusKey);
+    }
+    // The Home Screen note is only ever shown to iPhone/iPad users in a
+    // Safari tab — nobody else needs it, and it sits under the switch as a
+    // note rather than replacing the status line.
+    pushNote.hidden = !iosNeedsHomeScreen;
     if (iosNeedsHomeScreen) {
-      pushStatus.textContent = tr("pushIosHint");
-      pushToggleBtn.hidden = true;
+      pushNote.textContent = fmt("pushIosHint", { device: isIpad ? "iPad" : "iPhone" });
+      setSwitch(false, false, "pushDisabledStatus");
       return;
     }
-    if (!pushSupported) {
-      pushStatus.textContent = tr("pushUnsupportedStatus");
-      pushToggleBtn.hidden = true;
-      return;
-    }
-    if (Notification.permission === "denied") {
-      pushStatus.textContent = tr("pushDeniedStatus");
-      pushToggleBtn.hidden = true;
-      return;
-    }
+    if (!pushSupported) { setSwitch(false, false, "pushUnsupportedStatus"); return; }
+    if (Notification.permission === "denied") { setSwitch(false, false, "pushDeniedStatus"); return; }
     swRegistration().then(function (reg) {
       return reg.pushManager.getSubscription();
     }).then(function (sub) {
-      pushToggleBtn.hidden = false;
-      pushToggleBtn.textContent = sub ? tr("pushDisableBtn") : tr("pushEnableBtn");
-      pushToggleBtn.dataset.subscribed = sub ? "1" : "";
-      pushStatus.textContent = sub ? tr("pushEnabledStatus") : tr("pushDisabledStatus");
+      setSwitch(!!sub, true, failed === true ? "pushErrorStatus" : sub ? "pushEnabledStatus" : "pushDisabledStatus");
+      loadPushChat(sub);
     }).catch(function () {
-      pushStatus.textContent = tr("pushErrorStatus");
-      pushToggleBtn.hidden = true;
+      setSwitch(false, true, "pushErrorStatus"); // left enabled so a tap can retry
     });
   }
 
-  pushToggleBtn.addEventListener("click", function () {
-    pushToggleBtn.disabled = true;
-    if (pushToggleBtn.dataset.subscribed) {
-      swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
-        .then(function (sub) {
-          if (!sub) return;
-          var endpoint = sub.endpoint;
-          return sub.unsubscribe().then(function () {
-            return fetch(api("/api/push/unsubscribe"), {
-              method: "POST", headers: { "content-type": "application/json" },
-              body: JSON.stringify({ endpoint: endpoint })
-            });
+  function pushUnsubscribe() {
+    return swRegistration().then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) {
+        if (!sub) return;
+        var endpoint = sub.endpoint;
+        return sub.unsubscribe().then(function () {
+          return fetch(api("/api/push/unsubscribe"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ endpoint: endpoint })
           });
-        })
-        .then(renderPushUI)
-        .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
-        .finally(function () { pushToggleBtn.disabled = false; });
-      return;
-    }
-    Notification.requestPermission().then(function (perm) {
-      if (perm !== "granted") { renderPushUI(); return; }
+        });
+      });
+  }
+
+  function pushSubscribe() {
+    return Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") return;
       return fetch(api("/api/push/vapid-public-key"))
         .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
         .then(function (data) { return swRegistration().then(function (reg) {
@@ -1927,13 +2430,63 @@
             body: JSON.stringify({ subscription: sub.toJSON() })
           });
         })
-        .then(renderPushUI);
-    })
-      .catch(function () { pushStatus.textContent = tr("pushErrorStatus"); })
-      .finally(function () { pushToggleBtn.disabled = false; });
+        .then(function (r) { if (!r.ok) throw new Error("not saved"); });
+    });
+  }
+
+  pushToggleBtn.addEventListener("click", function () {
+    pushToggleBtn.disabled = true;
+    var failed = false;
+    (pushToggleBtn.dataset.subscribed ? pushUnsubscribe() : pushSubscribe())
+      .catch(function () { failed = true; })
+      .then(function () { renderPushUI(failed); });
   });
 
   if (pushSupported) swRegistration().catch(function () {});
+
+  // ---- picking up new versions. An installed app can sit in the background for
+  // days and is never reloaded, so without this it keeps running whatever
+  // version it last opened as. Every time it's brought to the front it asks
+  // the server for the current version (and for a newer service worker); if
+  // either changed, the page reloads — but only when it goes to the
+  // background, never while it's being looked at, and never over something in
+  // progress (a half-written chat message, an attached picture, an open scan
+  // or quiz). An open chat is reopened after. ----
+  var updateReady = false;
+  var loadedVersion = null;
+  var workInProgress = function () {
+    return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
+      !scanSubview.hidden || !sortItSubview.hidden);
+  };
+  var reloadIfReady = function () {
+    if (!updateReady || workInProgress()) return;
+    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+    location.reload();
+  };
+  var fetchVersion = function () {
+    return fetch("/version", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return (d && d.version) || null; })
+      .catch(function () { return null; });
+  };
+  fetchVersion().then(function (v) { loadedVersion = v; });
+  if (pushSupported) {
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!hadController) { hadController = true; return; } // first-ever install, nothing to replace
+      updateReady = true;
+      if (document.hidden) reloadIfReady();
+    });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { reloadIfReady(); return; }
+    fetchVersion().then(function (v) {
+      if (!v) return;
+      if (!loadedVersion) { loadedVersion = v; return; }
+      if (v !== loadedVersion) updateReady = true;
+    });
+    if (pushSupported) navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); }).catch(function () {});
+  });
 
   // ---- houses: build one, join one with a code/link, list the ones this
   // device has been to. Same philosophy as everything else here — no
@@ -2342,16 +2895,24 @@
   // that spinner directly isn't possible in any browser).
   var donateAmountMin = Number(donateAmountInput.min) || 1;
   var donateAmountMax = Number(donateAmountInput.max) || Infinity;
+  // Empty is the real starting state: + takes it to the minimum, and − from
+  // the minimum takes it back to empty, so the two buttons mirror each other
+  // (the amount itself still can't go below the minimum — empty isn't an
+  // amount, it's "nothing entered yet").
   function syncDonateAmountBtns() {
     var n = parseInt(donateAmountInput.value, 10);
-    donateAmountMinus.disabled = !isNaN(n) && n <= donateAmountMin;
+    donateAmountMinus.disabled = isNaN(n);
     donateAmountPlus.disabled = !isNaN(n) && n >= donateAmountMax;
   }
   function stepDonateAmount(delta) {
     var n = parseInt(donateAmountInput.value, 10);
-    // An empty field starts at the minimum on the first tap, either button.
-    n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + delta));
-    donateAmountInput.value = n;
+    if (delta > 0) {
+      n = isNaN(n) ? donateAmountMin : Math.min(donateAmountMax, Math.max(donateAmountMin, n + 1));
+      donateAmountInput.value = n;
+    } else if (!isNaN(n)) {
+      n = Math.min(n, donateAmountMax + 1) - 1;
+      donateAmountInput.value = n >= donateAmountMin ? n : "";
+    }
     syncDonateAmountBtns();
   }
   donateAmountMinus.addEventListener("click", function () { stepDonateAmount(-1); });

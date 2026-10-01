@@ -77,7 +77,7 @@ async function sendToAll(db, payload) {
 // reads email in isn't possible here — a push has no per-recipient
 // rendering, it's one payload broadcast to every subscribed device — so
 // this uses the house's own default language.
-async function sendDailyReminderPush(db, roster, lang) {
+async function sendDailyReminderPush(db, roster, lang, url) {
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   const codes = codesFor(tomorrow);
@@ -87,20 +87,20 @@ async function sendDailyReminderPush(db, roster, lang) {
   return sendToAll(db, {
     title: `${t(lang, "tonightLabel")} ${label}`,
     body: `${t(lang, "dutyMsgHeading")} ${person}`,
-    url: "/"
+    url: url || "/"
   });
 }
 
-async function sendOutFollowUpPush(db, task, lang) {
+async function sendOutFollowUpPush(db, task, lang, url) {
   const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
   return sendToAll(db, {
     title: `${t(lang, "outReminderHeading")} — ${label}`,
     body: t(lang, "outReminderPushBody").replace("{label}", label),
-    url: "/"
+    url: url || "/"
   });
 }
 
-async function sendWeekAheadPush(db, roster, lang) {
+async function sendWeekAheadPush(db, roster, lang, url) {
   if (!roster.length) return { sent: 0, pruned: 0, errors: [] };
   const today = new Date();
   const nextMonday = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
@@ -108,11 +108,62 @@ async function sendWeekAheadPush(db, roster, lang) {
   return sendToAll(db, {
     title: t(lang, "weekAheadSubject"),
     body: t(lang, "weekAheadBody").replace("{name}", person),
-    url: "/"
+    url: url || "/"
   });
 }
 
+// ---- chat notifications ----
+
+// Opt a subscription in or out of chat notifications. authorKey ties it to the
+// chat identity of the device that turned it on (so that device is skipped
+// when it's the one posting); null turns them off. False = no such subscription.
+function setChatPush(db, endpoint, authorKey) {
+  return db.prepare("UPDATE push_subscriptions SET chat_author_key = ?, chat_pushed_at = NULL WHERE endpoint = ?")
+    .run(authorKey, endpoint).changes > 0;
+}
+
+function chatPushEnabled(db, endpoint) {
+  const row = db.prepare("SELECT chat_author_key FROM push_subscriptions WHERE endpoint = ?").get(endpoint);
+  return !!(row && row.chat_author_key);
+}
+
+const CHAT_PUSH_COOLDOWN_MS = 60 * 1000;
+
+// One push per new message to every opted-in device except the author's —
+// deliberately saying nothing about who wrote it or what it says, only that
+// something's new. A device that was just notified is left alone for a
+// minute so a quick back-and-forth doesn't buzz it for every line; a reply
+// aimed at a device's own message always goes through, worded as a reply.
+async function notifyChat(db, { authorKey, parentAuthorKey, lang, url, now }) {
+  if (!configure()) return { sent: 0, pruned: 0, skipped: 0 };
+  const at = now || Date.now();
+  const subs = db.prepare(
+    "SELECT endpoint, p256dh, auth, chat_author_key, chat_pushed_at FROM push_subscriptions WHERE chat_author_key IS NOT NULL AND chat_author_key != ?"
+  ).all(authorKey);
+  let sent = 0, pruned = 0, skipped = 0;
+  for (const row of subs) {
+    const isReply = !!parentAuthorKey && row.chat_author_key === parentAuthorKey;
+    if (!isReply && row.chat_pushed_at && at - Date.parse(row.chat_pushed_at) < CHAT_PUSH_COOLDOWN_MS) { skipped++; continue; }
+    const payload = JSON.stringify({
+      title: t(lang, "chatPushTitle"),
+      body: t(lang, isReply ? "chatPushReply" : "chatPushNew"),
+      url,
+      tag: "chat"
+    });
+    try {
+      await webpush.sendNotification({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, payload);
+      db.prepare("UPDATE push_subscriptions SET chat_pushed_at = ? WHERE endpoint = ?").run(new Date(at).toISOString(), row.endpoint);
+      sent++;
+    } catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) { removeSubscription(db, row.endpoint); pruned++; }
+      else console.error("Chat push failed:", err.message);
+    }
+  }
+  return { sent, pruned, skipped };
+}
+
 module.exports = {
+  setChatPush, chatPushEnabled, notifyChat,
   configure, publicKey, saveSubscription, removeSubscription, sendToAll,
   sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush
 };

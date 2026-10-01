@@ -225,8 +225,8 @@
   .qty-btn:active:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
   .qty-btn:disabled { color: var(--ink-faint); cursor: default; }
   .qty-input {
-    width: 54px; min-width: 0; text-align: center; font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
-    color: var(--ink); background: transparent; border: none; padding: 9px 2px;
+    width: 68px; min-width: 0; text-align: center; font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--ink); background: transparent; border: none; padding: 0 4px;
     -moz-appearance: textfield;
   }
   .qty-input::-webkit-outer-spin-button, .qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -499,11 +499,72 @@
   /* ---- anonymous chat: entry button + "coming soon" screen ---- */
   .chat-pill { width: 100%; font-family: 'Work Sans', sans-serif; color: var(--ink); text-align: left; cursor: pointer; }
   .chat-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .soon-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 9px; }
-  .chat-soon { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 28px 22px; }
-  .chat-soon-icon { width: 54px; height: 54px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 4px; }
-  .chat-soon-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 0.03em; color: var(--accent); }
-  .chat-soon-body { font-size: 13px; color: var(--ink-soft); line-height: 1.55; max-width: 32ch; }
+  .unread-badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+  .unread-badge[hidden] { display: none; }
+
+  /* ---- anonymous chat ---- */
+  .chat-id { font-size: 12px; color: var(--ink-faint); padding: 0 2px; }
+  .chat-id b { font-weight: 700; }
+  /* The screen fills the space between the header and the tab bar, so the
+     composer rests just above the tab bar even when the thread is short. */
+  #chatSubview:not([hidden]) { display: flex; flex-direction: column; gap: 10px; min-height: calc(100vh - 184px); min-height: calc(100dvh - 184px); }
+  .chat-thread { flex: 1 1 auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 160px; }
+  .chat-empty { margin: auto; text-align: center; font-size: 13px; line-height: 1.5; color: var(--ink-faint); max-width: 30ch; padding: 24px 0; }
+  .chat-day { align-self: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 8px 0 2px; }
+  .chat-msg { max-width: 86%; align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 8px 11px 7px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .chat-msg.mine { align-self: flex-end; background: var(--accent-soft); border-radius: 14px 14px 4px 14px; }
+  .chat-msg.flash { animation: chatFlash 1.2s ease; }
+  @keyframes chatFlash { 0%, 40% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
+  .chat-meta { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+  .chat-name { font-weight: 700; letter-spacing: 0.01em; }
+  .chat-time { color: var(--ink-faint); margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+  .chat-quote { display: block; width: 100%; text-align: start; background: rgba(0,0,0,0.22); border: none; border-inline-start: 3px solid var(--ink-faint); border-radius: 6px; padding: 5px 8px; color: var(--ink-soft); font-family: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; }
+  .chat-quote b { display: block; font-size: 11px; margin-bottom: 1px; }
+  .chat-quote.gone { cursor: default; font-style: italic; color: var(--ink-faint); }
+  .chat-body { font-size: 14px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .chat-pic { display: block; max-width: 100%; max-height: 260px; border-radius: 9px; border: 1px solid var(--line); cursor: zoom-in; background: var(--surface); }
+  .chat-pic-gone { font-size: 12px; font-style: italic; color: var(--ink-faint); background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px 10px; }
+  .chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .chat-reacts { display: flex; gap: 4px; margin-inline-start: auto; }
+  .chat-react { background: rgba(0,0,0,0.2); border: 1px solid transparent; border-radius: 999px; padding: 1px 7px; font-family: inherit; font-size: 12px; line-height: 1.55; color: var(--ink-soft); cursor: pointer; opacity: 0.65; font-variant-numeric: tabular-nums; }
+  .chat-react:hover { opacity: 1; }
+  .chat-react.has { opacity: 1; border-color: var(--line); }
+  .chat-react.on { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); opacity: 1; }
+  .chat-react:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chat-act { background: none; border: none; padding: 2px 0; font-family: inherit; font-size: 11px; font-weight: 600; color: var(--ink-faint); cursor: pointer; }
+  .chat-act:hover { color: var(--accent); }
+  .chat-act.danger:hover { color: var(--wrong); }
+  .chat-note { font-size: 11px; color: var(--ink-faint); text-align: center; padding: 0 8px; }
+  .chat-composer { position: sticky; bottom: 80px; z-index: 5; display: flex; flex-direction: column; gap: 6px; background: var(--bg); padding: 8px 0 16px; box-shadow: 0 -10px 12px -6px var(--bg); }
+  .chat-compose-row { display: flex; align-items: flex-end; gap: 8px; }
+  .chat-compose-row textarea { flex: 1; min-width: 0; resize: none; max-height: 120px; font-family: 'Work Sans', sans-serif; font-size: 16px; /* iOS Safari zooms the page into any field under 16px when tapped */ line-height: 1.35; color: var(--ink); background: var(--surface-2); border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+  .chat-compose-row textarea:focus { outline: none; border-color: var(--accent); }
+  .chat-compose-row textarea::placeholder { color: var(--ink-faint); }
+  .chat-icon-btn { flex: none; width: 42px; height: 42px; border-radius: 12px; background: var(--surface-2); border: 2px solid var(--line); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s ease, color 0.15s ease; }
+  .chat-icon-btn:hover { color: var(--accent); }
+  .chat-icon-btn:focus-visible, .chat-chip-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chat-send { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .chat-send:hover:not(:disabled) { color: var(--accent-ink); filter: brightness(1.08); }
+  .chat-send:disabled { opacity: 0.4; cursor: default; }
+  .chat-chip { display: flex; align-items: center; gap: 8px; background: var(--surface-2); border: 1px solid var(--line); border-inline-start: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px 6px 10px; font-size: 12px; color: var(--ink-soft); }
+  .chat-chip[hidden] { display: none; }
+  .chat-chip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-chip img { width: 30px; height: 30px; object-fit: cover; border-radius: 6px; flex: none; }
+  .chat-chip-x { flex: none; width: 24px; height: 24px; border-radius: 6px; background: none; border: none; color: var(--ink-faint); font-size: 12px; cursor: pointer; }
+  .chat-lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 16px; cursor: zoom-out; }
+  .chat-lightbox[hidden] { display: none; }
+  .chat-lightbox img { max-width: 100%; max-height: 100%; border-radius: 10px; }
+  @media (min-width: 900px) { .chat-composer { bottom: 0; padding-bottom: 8px; } .chat-msg { max-width: 70%; } }
+  @media (prefers-reduced-motion: reduce) { .chat-msg.flash { animation: none; } }
+
+  /* iPhone Safari zooms the whole page into any text field under 16px when it
+     is tapped, and leaves it zoomed. Applied on iOS only (this @supports test
+     is true there and nowhere else) so the design is unchanged elsewhere. */
+  @supports (-webkit-touch-callout: none) {
+    input.claim-select, .qty-input, #donateCard .qty-input { font-size: 16px; }
+    input.claim-select::placeholder { font-size: 13px; }
+    .qty-input::placeholder, #donateCard .qty-input::placeholder { font-size: 12px; }
+  }
 
   /* ---- roster tab (Timetable & roster) ---- */
   .page-title { font-size: 18px; font-weight: 600; color: var(--ink); }
@@ -590,6 +651,28 @@
   .me-picker .claim-select { align-self: flex-start; }
   .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
   .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .push-row { display: flex; align-items: center; gap: 14px; }
+  .push-row .claim-status { flex: 1; min-width: 0; }
+  .push-chat-row { border-top: 1px dashed var(--line); padding-top: 10px; }
+  .push-chat-text { flex: 1; min-width: 0; }
+  .push-chat-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .push-hint { font-size: 11.5px; line-height: 1.4; color: var(--ink-faint); margin-top: 2px; }
+  .push-note { font-size: 11.5px; line-height: 1.45; color: var(--ink-faint); border-top: 1px dashed var(--line); padding-top: 8px; }
+  .toggle-switch {
+    flex: none; position: relative; width: 48px; height: 28px; padding: 0; border-radius: 999px;
+    background: var(--surface-2); border: 2px solid var(--line); cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .toggle-knob {
+    position: absolute; top: 2px; inset-inline-start: 2px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--ink-faint); transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .toggle-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+  .toggle-switch[aria-checked="true"] .toggle-knob { transform: translateX(20px); background: var(--accent-ink); }
+  [dir="rtl"] .toggle-switch[aria-checked="true"] .toggle-knob { transform: translateX(-20px); }
+  .toggle-switch:disabled { opacity: 0.5; cursor: default; }
+  .toggle-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .toggle-switch, .toggle-knob { transition: none; } }
 
   /* ---- houses ---- */
   .houses-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -663,6 +746,24 @@
 
   /* ---- donate / me picker ---- */
   #meCard .claim-row, #donateCard .claim-row { align-items: center; }
+  /* One row — name picker, amount stepper, GIVE — on a shared 40px height and
+     6px corner. The stepper and GIVE are compact and fixed; the name picker
+     takes the remaining width. Phones narrower than ~350px can't fit all
+     three without squeezing the name to nothing, so there it drops to two
+     rows (picker on top, stepper + GIVE below). */
+  #donateCard .claim-row { flex-wrap: nowrap; gap: 6px; max-width: 420px; }
+  #donateCard .select-trigger { flex: 1 1 0; min-width: 0; height: 40px; padding-block: 0; padding-inline: 8px; }
+  #donateCard .qty-stepper { flex: none; height: 40px; }
+  #donateCard .qty-btn { width: 26px; }
+  #donateCard .qty-input { flex: none; width: 54px; padding: 0 2px; font-size: 12px; }
+  #donateCard #donateBtn { flex: none; height: 40px; padding: 0 12px; border-radius: 6px; }
+  @media (max-width: 349px) {
+    #donateCard .claim-row { flex-wrap: wrap; gap: 8px; }
+    #donateCard .select-trigger { flex: 1 1 100%; }
+    #donateCard .qty-stepper { flex: 1 1 0; min-width: 0; }
+    #donateCard .qty-input { flex: 1 1 0; width: auto; }
+    #donateCard #donateBtn { min-width: 88px; }
+  }
   .profile-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
   .profile-avatar { width: 54px; height: 54px; font-size: 22px; border-width: 1px; font-family: 'Bebas Neue', sans-serif; }
   .profile-id { flex: 1; min-width: 0; }
@@ -745,11 +846,11 @@
     </div>
 
     <!-- Entry point for the anonymous house chat. The chat itself isn't built
-         yet — this opens a "coming soon" screen (see #chatSubview). -->
+         yet — this opens the anonymous house chat (see #chatSubview). -->
     <button class="poster coins-pill chat-pill" id="chatEntryBtn" type="button">
       <span class="coins-pill-icon on">&#128172;</span>
       <span class="coins-pill-label" data-i18n="chatEntryLabel"></span>
-      <span class="soon-badge" data-i18n="chatSoonBadge"></span>
+      <span class="unread-badge" id="chatUnread" hidden></span>
     </button>
 
     <div class="launch-row">
@@ -808,11 +909,32 @@
   <!-- Anonymous chat: not built yet — a plain "coming soon" screen. -->
   <section data-view="home" id="chatSubview" hidden>
     <button class="subview-head" id="chatBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="chatEntryLabel"></span></button>
-    <div class="poster chat-soon">
-      <div class="chat-soon-icon">&#128172;</div>
-      <div class="chat-soon-title" data-i18n="chatSoonTitle"></div>
-      <div class="chat-soon-body" data-i18n="chatSoonBody"></div>
+    <div class="chat-id"><span data-i18n="chatPostingAs"></span> <b id="chatMeName">…</b></div>
+    <div class="poster chat-thread" id="chatThread" aria-live="polite"></div>
+    <div class="chat-note" data-i18n="chatNote"></div>
+    <div class="chat-composer" id="chatComposer">
+      <div class="chat-chip" id="chatReplyBar" hidden>
+        <span class="chat-chip-text" id="chatReplyText"></span>
+        <button class="chat-chip-x" id="chatReplyCancel" type="button" aria-label="&#10005;">&#10005;</button>
+      </div>
+      <div class="chat-chip chat-attach-chip" id="chatAttachBar" hidden>
+        <img id="chatAttachThumb" alt="">
+        <span class="chat-chip-text" id="chatAttachText"></span>
+        <button class="chat-chip-x" id="chatAttachClear" type="button" aria-label="&#10005;">&#10005;</button>
+      </div>
+      <div class="chat-compose-row">
+        <label class="chat-icon-btn" id="chatAttachBtn" for="chatPhotoInput" data-i18n-title="chatAttach" title="">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10.5" r="1.7"></circle><path d="M21 16l-5-5-8 8"></path></svg>
+        </label>
+        <input type="file" id="chatPhotoInput" accept="image/*" hidden>
+        <textarea id="chatInput" rows="1" maxlength="1000" data-i18n-placeholder="chatPlaceholder"></textarea>
+        <button class="chat-icon-btn chat-send" id="chatSendBtn" type="button" data-i18n-title="chatSend" title="">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+        </button>
+      </div>
+      <div class="claim-status" id="chatStatus"></div>
     </div>
+    <div class="chat-lightbox" id="chatLightbox" hidden><img id="chatLightboxImg" alt=""></div>
   </section>
 
   <section data-view="home" id="scanSubview" hidden>
@@ -951,8 +1073,18 @@
   <section data-view="you">
     <div class="eyebrow" data-i18n="pushHeading"></div>
     <div class="poster notify-card" id="pushCard">
-      <div class="claim-status" id="pushStatus"></div>
-      <button class="stamp-btn" id="pushToggleBtn" type="button" hidden></button>
+      <div class="push-row">
+        <div class="claim-status" id="pushStatus"></div>
+        <button class="toggle-switch" id="pushToggleBtn" type="button" role="switch" aria-checked="false" disabled><span class="toggle-knob"></span></button>
+      </div>
+      <div class="push-note" id="pushNote" hidden></div>
+      <div class="push-row push-chat-row">
+        <div class="push-chat-text">
+          <div class="push-chat-label" data-i18n="pushChatLabel"></div>
+          <div class="push-hint" data-i18n="pushChatHint"></div>
+        </div>
+        <button class="toggle-switch" id="pushChatToggleBtn" type="button" role="switch" aria-checked="false" disabled><span class="toggle-knob"></span></button>
+      </div>
     </div>
   </section>
 
