@@ -2285,6 +2285,14 @@
         if (ev.data && ev.data.type === "open-intent") chatOpenFromIntent();
       });
     }
+    // An update reloaded the page while the chat was open — put it back.
+    try {
+      if (sessionStorage.getItem("binDutyResumeChat") === "1") {
+        sessionStorage.removeItem("binDutyResumeChat");
+        showView("home");
+        showHomeSubview("chat");
+      }
+    } catch (e) {}
     var wantChat = new URLSearchParams(location.search);
     if (wantChat.get("chat") === "1") {
       showView("home");
@@ -2434,17 +2442,23 @@
 
   // ---- picking up new versions. An installed app can sit in the background for
   // days and is never reloaded, so without this it keeps running whatever
-  // version it last opened as. Every time it's brought back to the front it
-  // asks for a newer service worker; when one takes over, the page reloads —
-  // unless something unsent is on screen (a half-written chat message, an
-  // attached picture), in which case it waits for the next time. ----
+  // version it last opened as. Every time it's brought to the front it asks
+  // for a newer service worker; once one has taken over, the page reloads —
+  // but only when it goes to the background, never while it's being looked
+  // at, and never over something in progress (a half-written chat message, an
+  // attached picture, an open scan or quiz). An open chat is reopened after. ----
   if (pushSupported) {
     var hadController = !!navigator.serviceWorker.controller;
     var updateReady = false;
-    var unsentWork = function () {
-      return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile());
+    var workInProgress = function () {
+      return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
+        !scanSubview.hidden || !sortItSubview.hidden);
     };
-    var reloadIfReady = function () { if (updateReady && !unsentWork()) location.reload(); };
+    var reloadIfReady = function () {
+      if (!updateReady || workInProgress()) return;
+      try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+      location.reload();
+    };
     navigator.serviceWorker.addEventListener("controllerchange", function () {
       if (!hadController) { hadController = true; return; } // first-ever install, nothing to replace
       updateReady = true;
@@ -2452,7 +2466,6 @@
     });
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) { reloadIfReady(); return; }
-      reloadIfReady();
       navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); }).catch(function () {});
     });
   }
