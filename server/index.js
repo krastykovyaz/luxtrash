@@ -333,6 +333,24 @@ app.delete("/api/roster/:name", writeLimiter, (req, res) => {
 // a proof photo (bin at the curb / bin back in place) ---
 const PHOTO_MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heic" };
 
+// The type comes from the file's own bytes, never from what the client says
+// it is — a "photo" declared as text/html would otherwise be served back as a
+// web page on this site.
+function photoKind(file) {
+  const image = chat.sniffImage(file.buffer);
+  if (image) return image.mime;
+  const b = file.buffer;
+  if (b.length > 12 && b.slice(4, 8).toString("latin1") === "ftyp" && /^(heic|heix|hevc|heif|mif1|msf1)$/.test(b.slice(8, 12).toString("latin1"))) return "image/heic";
+  return null;
+}
+function rejectNonImage(req, res) {
+  if (!req.file) return false;
+  const mime = photoKind(req.file);
+  if (!mime) { res.status(400).json({ error: "That file isn't a photo.", code: "NOT_AN_IMAGE" }); return true; }
+  req.file.mimetype = mime;
+  return false;
+}
+
 function savePhoto(house, dateKey, which, buffer, mime) {
   const ext = PHOTO_MIME_EXT[mime] || "jpg";
   const filename = `${dateKey}-${which}.${ext}`;
@@ -382,6 +400,7 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
       const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
       return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
     }
+    if (rejectNonImage(req, res)) return;
     const name = req.body && req.body.name;
     try {
       const row = confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
@@ -415,6 +434,7 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
       const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
       return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
     }
+    if (rejectNonImage(req, res)) return;
     const name = req.body && req.body.name;
     try {
       const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
@@ -457,7 +477,8 @@ app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
   const file = path.join(taskPhotoDir(req.house.slug), row.photo);
   if (!fs.existsSync(file)) return res.status(404).end();
   res.set("Cache-Control", "private, max-age=86400");
-  res.type(row.mime || "image/jpeg");
+  // Older rows stored whatever type the uploader claimed — only ever answer as an image.
+  res.type(PHOTO_MIME_EXT[row.mime] ? row.mime : "application/octet-stream");
   fs.createReadStream(file).pipe(res);
 });
 
@@ -921,8 +942,21 @@ app.get("/version", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
+// Last in line: any error (a malformed request body, a thrown handler) gets a
+// plain message — never Express's default page with a stack trace and paths.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(`${req.method} ${req.path} failed: ${err.message}`);
+  res.status(status).json({ error: status >= 500 ? "Something went wrong on the server." : "That request couldn't be read." });
+});
+
+// Only nginx talks to this process, so it listens on this machine alone —
+// reachable from outside it would bypass HTTPS and, by faking the forwarded
+// address, every rate limit. A container sets HOST=0.0.0.0.
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const HOST = process.env.HOST || "127.0.0.1";
+app.listen(PORT, HOST, () => {
   console.log(`Bin Duty server listening on http://localhost:${PORT} (TZ=${process.env.TZ})`);
   if (!process.env.GEMINI_API_KEY) {
     console.warn("GEMINI_API_KEY is not set — the camera check will return a 503 until it is.");

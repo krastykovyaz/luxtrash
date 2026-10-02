@@ -223,4 +223,4 @@ function photoOf(db, slug, id) {
   return fs.existsSync(file) ? { file, mime: row.photo_mime } : null;
 }
 
-module.exports = { MAX_BODY, REACTIONS, validToken, authorKey, list, unreadCount, post, remove, react, authorKeyOf, photoOf };
+module.exports = { sniffImage, MAX_BODY, REACTIONS, validToken, authorKey, list, unreadCount, post, remove, react, authorKeyOf, photoOf };
