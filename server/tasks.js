@@ -126,6 +126,20 @@ function confirmOut(db, dateKey, roster, name, flatSchedule) {
     err.status = 400;
     throw err;
   }
+  // A collection that has already passed without anyone confirming it is
+  // over (the app stops showing it too) — confirming it now would only push
+  // tonight's real task off the screen.
+  if (dateKey < dateKeyOf(today)) {
+    const err = new Error("That collection has already passed.");
+    err.status = 400;
+    throw err;
+  }
+  const existing = getTaskRow(db, dateKey);
+  if (existing && existing.out_at) {
+    const err = new Error("Someone already confirmed that one out.");
+    err.status = 409;
+    throw err;
+  }
   if (!roster.includes(name)) {
     const err = new Error("Unknown roster name.");
     err.status = 400;
@@ -147,6 +161,12 @@ function confirmBack(db, dateKey, roster, name) {
   if (!row || !row.out_at) {
     const err = new Error("Confirm it's out before confirming it's back.");
     err.status = 400;
+    throw err;
+  }
+  // Closing a task pays out, so it can only happen once.
+  if (row.back_at) {
+    const err = new Error("Someone already confirmed that one back.");
+    err.status = 409;
     throw err;
   }
   if (!roster.includes(name)) {

@@ -1,6 +1,7 @@
 const { t, binLabel } = require("./i18n");
 const { codesFor, mondayOf, personForWeek } = require("./rotation");
 const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
+const secret = require("./secret");
 
 let transporter = null;
 let warnedMissingConfig = false;
@@ -24,7 +25,9 @@ function fromHeader() {
 function unsubscribeHeaders(email, houseSlug) {
   // ?h= is required now — there's no implicit default house for a bare
   // unsubscribe link to fall back to.
-  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}?h=${encodeURIComponent(houseSlug)}`;
+  // Signed: the address alone isn't enough to unsubscribe someone.
+  const sig = secret.sign(`unsub|${houseSlug}|${email.toLowerCase()}`);
+  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}?h=${encodeURIComponent(houseSlug)}&s=${sig}`;
   return {
     "List-Unsubscribe": `<mailto:${process.env.SMTP_USER}?subject=unsubscribe>, <${url}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"

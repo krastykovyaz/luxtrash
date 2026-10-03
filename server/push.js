@@ -34,6 +34,23 @@ function publicKey() {
   return process.env.VAPID_PUBLIC_KEY || null;
 }
 
+// Browser push services — the only places a subscription may point, since
+// the server POSTs to that address later.
+const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /(^|\.)push\.apple\.com$/,
+  /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/];
+function isPushServiceUrl(endpoint) {
+  if (typeof endpoint !== "string" || endpoint.length > 1000) return false;
+  let url;
+  try { url = new URL(endpoint); } catch (e) { return false; }
+  return url.protocol === "https:" && !url.port && PUSH_HOSTS.some((re) => re.test(url.hostname));
+}
+
+const MAX_SUBSCRIPTIONS_PER_HOUSE = 100;
+function hasRoomFor(db, endpoint) {
+  if (db.prepare("SELECT 1 FROM push_subscriptions WHERE endpoint = ?").get(endpoint)) return true;
+  return db.prepare("SELECT COUNT(*) AS n FROM push_subscriptions").get().n < MAX_SUBSCRIPTIONS_PER_HOUSE;
+}
+
 function saveSubscription(db, sub) {
   db.prepare(
     "INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?) " +
@@ -164,6 +181,7 @@ async function notifyChat(db, { authorKey, parentAuthorKey, lang, url, now }) {
 
 module.exports = {
   setChatPush, chatPushEnabled, notifyChat,
+  isPushServiceUrl, hasRoomFor,
   configure, publicKey, saveSubscription, removeSubscription, sendToAll,
   sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush
 };

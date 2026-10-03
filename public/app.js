@@ -134,8 +134,9 @@
     MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
     try {
       localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES));
-      localStorage.removeItem("binDutyMe:" + slug);
-      localStorage.removeItem("binDutyBestStreak:" + slug);
+      ["binDutyMe", "binDutyBestStreak", "binDutyAuth", "binDutyChatToken", "binDutyChatSeen"].forEach(function (k) {
+        localStorage.removeItem(k + ":" + slug);
+      });
     } catch (e) {}
     setOwnerToken(slug, null);
   }
@@ -945,7 +946,8 @@
   }
 
   function removeFromRoster(name) {
-    apiFetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
+    var ownerToken = HOUSE_SLUG ? getOwnerTokens()[HOUSE_SLUG] : null;
+    apiFetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE", headers: ownerToken ? { "x-owner-token": ownerToken } : {} })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -1913,6 +1915,7 @@
         // First email on an open name: this device is the one setting it up, so it stays signed in.
         if (data && data.session) { setAuthToken(data.session); AUTH.session = ME; }
         notifyEmailInput.value = "";
+        if (data && data.subscribed) { notifyStatus.textContent = ""; loadMySubscription(); return; }
         notifyStatus.textContent = tr("notifyPending");
       })
       .catch(function (e) { notifyStatus.textContent = e.message || tr("notifyFailed"); })
@@ -3226,6 +3229,7 @@
     var titleEl = document.getElementById("scanTitle");
 
     function showPhoto(url) {
+      if (thumbEl.src && thumbEl.src.indexOf("blob:") === 0 && thumbEl.src !== url) URL.revokeObjectURL(thumbEl.src);
       thumbEl.src = url;
       thumbEl.hidden = false;
       idleEl.hidden = true;
@@ -3234,6 +3238,7 @@
       resultEl.hidden = true;
       resultEl.innerHTML = "";
       thumbEl.hidden = true;
+      if (thumbEl.src && thumbEl.src.indexOf("blob:") === 0) URL.revokeObjectURL(thumbEl.src);
       thumbEl.removeAttribute("src");
       idleEl.hidden = false;
       titleEl.textContent = tr("scanScreenTitle");
@@ -3330,7 +3335,7 @@
         apiFetch(api("/api/check/email"), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
+          body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why, sig: data.sig })
         })
           .then(function (r) {
             if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });

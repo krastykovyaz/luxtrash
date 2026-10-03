@@ -7,14 +7,19 @@
 // chooses to sign out — and then needs a fresh code to get back in. Names with
 // no confirmed email stay open, exactly as before.
 //
-// Codes and session tokens are only ever stored hashed.
+// Codes and session tokens are only ever stored hashed. A session remembers
+// which email it was earned through (the address the code went to, or the
+// one being confirmed by the device that set the name up), and it only counts
+// while that email is a confirmed address of the name — so whoever protects a
+// name with their own address can't be overridden by an older session.
 
 const crypto = require("crypto");
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;          // wrong guesses per code
-const MAX_FAILS = 10;            // wrong guesses per name per FAIL_WINDOW_MS, across all its codes
+const MAX_FAILS = 20;            // wrong guesses per name per FAIL_WINDOW_MS, across all its codes and devices
+                                 // (index.js also caps each device's own guesses, so one person can't trip this alone)
 const FAIL_WINDOW_MS = 60 * 60 * 1000;
 const SESSION_MS = 180 * 24 * 60 * 60 * 1000;
 const TOUCH_MS = 60 * 60 * 1000; // how often a session's last_seen is rewritten
@@ -39,6 +44,15 @@ function ensureTables(db) {
       last_seen INTEGER NOT NULL
     )
   `);
+  const cols = db.prepare("PRAGMA table_info(auth_sessions)").all().map((c) => c.name);
+  if (cols.indexOf("email") === -1) {
+    db.exec("ALTER TABLE auth_sessions ADD COLUMN email TEXT");
+    // Sessions from before this column were all earned with a code sent to the
+    // name's confirmed address, so they belong to that address.
+    db.exec(`UPDATE auth_sessions SET email = (
+      SELECT email FROM accounts WHERE accounts.name = auth_sessions.name AND confirmed = 1 ORDER BY created_at DESC LIMIT 1
+    ) WHERE email IS NULL`);
+  }
 }
 
 function sha(s) {
@@ -113,17 +127,18 @@ function verifyCode(db, name, code, now) {
   }
 
   db.prepare("UPDATE auth_codes SET code_hash = NULL, attempts = 0, fails = 0 WHERE name = ?").run(name);
-  return { token: createSession(db, name, now) };
+  const account = accountFor(db, name);
+  return { token: createSession(db, name, account ? account.email : null, now) };
 }
 
 // Signs a device in as `name` without a code. Only for the device that is
 // attaching the very first email to a name that was open until now — it is
 // the one setting the protection up, so it shouldn't be locked out by it.
-function createSession(db, name, now) {
+function createSession(db, name, email, now) {
   now = now || Date.now();
   const token = crypto.randomBytes(32).toString("base64url");
-  db.prepare("INSERT INTO auth_sessions (token_hash, name, created_at, last_seen) VALUES (?, ?, ?, ?)")
-    .run(sha(token), name, now, now);
+  db.prepare("INSERT INTO auth_sessions (token_hash, name, email, created_at, last_seen) VALUES (?, ?, ?, ?, ?)")
+    .run(sha(token), name, email || null, now, now);
   return token;
 }
 
@@ -132,16 +147,28 @@ function sessionName(db, token, now) {
   if (typeof token !== "string" || token.length < 20 || token.length > 100) return null;
   now = now || Date.now();
   const h = sha(token);
-  const row = db.prepare("SELECT name, last_seen FROM auth_sessions WHERE token_hash = ?").get(h);
+  const row = db.prepare("SELECT name, email, last_seen FROM auth_sessions WHERE token_hash = ?").get(h);
   if (!row) return null;
   if (now - row.last_seen > SESSION_MS) {
     db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(h);
+    return null;
+  }
+  // A protected name only accepts sessions earned through one of its own
+  // confirmed addresses (not dropped: the address may be confirmed later).
+  if (isLocked(db, row.name) &&
+      !(row.email && db.prepare("SELECT 1 FROM accounts WHERE name = ? AND email = ? AND confirmed = 1").get(row.name, row.email))) {
     return null;
   }
   if (now - row.last_seen > TOUCH_MS) {
     db.prepare("UPDATE auth_sessions SET last_seen = ? WHERE token_hash = ?").run(now, h);
   }
   return row.name;
+}
+
+// Every session of a name — when the name leaves the roster.
+function revokeName(db, name) {
+  db.prepare("DELETE FROM auth_sessions WHERE name = ?").run(name);
+  db.prepare("DELETE FROM auth_codes WHERE name = ?").run(name);
 }
 
 function revoke(db, token) {
@@ -151,6 +178,6 @@ function revoke(db, token) {
 
 module.exports = {
   ensureTables, lockedNames, isLocked, accountFor,
-  issueCode, dropCode, verifyCode, createSession, sessionName, revoke,
+  issueCode, dropCode, verifyCode, createSession, sessionName, revoke, revokeName,
   CODE_TTL_MS, RESEND_MS, MAX_ATTEMPTS
 };

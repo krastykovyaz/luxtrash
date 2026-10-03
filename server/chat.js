@@ -12,31 +12,21 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { weekKeyOf } = require("./rotation");
-const { DATA_DIR, chatPhotoDir } = require("./db");
+const { chatPhotoDir } = require("./db");
 
 const MAX_BODY = 1000;
 const REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}"];
 const FEED_SIZE = 100;
 const RETENTION_DAYS = 30;       // message text
 const PHOTO_RETENTION_DAYS = 7;  // pictures are the heavy part, so they go sooner
+const MAX_PHOTO_BYTES_PER_HOUSE = 300 * 1024 * 1024; // a week of pictures can't fill the disk
 
 const ADJECTIVES = ["Amber", "Brisk", "Cosmic", "Dusty", "Eager", "Frosty", "Gentle", "Hazy", "Icy", "Jolly", "Keen", "Lucky", "Mellow", "Nimble", "Odd", "Plucky", "Quiet", "Rusty", "Sunny", "Tidy", "Umber", "Vivid", "Witty", "Zesty", "Bold", "Calm", "Daring", "Fuzzy", "Glad", "Humble", "Sly", "Swift"];
 const ANIMALS = ["Badger", "Beetle", "Crow", "Dingo", "Ferret", "Gecko", "Heron", "Ibis", "Jackal", "Koala", "Lemur", "Mole", "Newt", "Otter", "Panda", "Quokka", "Raven", "Stoat", "Toad", "Vole", "Walrus", "Yak", "Zebra", "Falcon", "Hedgehog", "Lynx", "Moose", "Owl", "Pigeon", "Robin", "Seal", "Wombat"];
 
-// Generated once and kept next to the databases. Without it the hashes can't
-// be recomputed, and nobody can work out which token a stored key came from.
-function loadSecret() {
-  const file = path.join(DATA_DIR, "chat-secret");
-  if (fs.existsSync(file)) return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
-  const secret = crypto.randomBytes(32);
-  fs.writeFileSync(file, secret.toString("hex"), { mode: 0o600 });
-  return secret;
-}
-const SECRET = loadSecret();
-
-function hmac(input) {
-  return crypto.createHmac("sha256", SECRET).update(input).digest();
-}
+// The keyed hash (see secret.js) is what makes a stored key useless to anyone
+// who can't recompute it from the device's own token.
+const { hmac } = require("./secret");
 
 function validToken(token) {
   return typeof token === "string" && /^[A-Za-z0-9_-]{16,64}$/.test(token);
@@ -114,6 +104,13 @@ function unreadCount(db, key, afterId) {
   return db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE id > ? AND author_key != ?").get(afterId, key).n;
 }
 
+function photoBytes(slug) {
+  const dir = chatPhotoDir(slug);
+  return fs.readdirSync(dir).reduce((sum, f) => {
+    try { return sum + fs.statSync(path.join(dir, f)).size; } catch (e) { return sum; }
+  }, 0);
+}
+
 function removePhotoFile(slug, filename) {
   if (!filename) return;
   const file = path.join(chatPhotoDir(slug), filename);
@@ -155,6 +152,9 @@ function post(db, slug, key, { body, replyTo, file }) {
     if (!image) throw Object.assign(new Error("That file isn't a JPEG, PNG or WebP image."), { status: 400 });
   }
   if (!text && !image) throw Object.assign(new Error("Write something or attach a picture."), { status: 400 });
+  if (image && photoBytes(slug) + file.buffer.length > MAX_PHOTO_BYTES_PER_HOUSE) {
+    throw Object.assign(new Error("The chat's picture space is full for now — older pictures clear after 7 days."), { status: 413 });
+  }
 
   let parentId = null;
   if (replyTo != null && replyTo !== "") {
