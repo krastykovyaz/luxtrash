@@ -167,6 +167,23 @@ test("a collection that already passed can't be confirmed (it would hijack tonig
   assert.equal(r.status, 400);
 });
 
+test("'bins are empty — skip' closes the collection with no coins and no way to claim it", async () => {
+  const t = new Date(); t.setDate(t.getDate() + 1);
+  const key = dateKey(t);
+  const coinsBefore = (await call("GET", `/api/tasks/leaderboard${qc()}`)).data;
+  const skipped = await call("POST", `/api/tasks/${key}/skip${qc()}`, { json: { name: "Ben" } });
+  assert.equal(skipped.status, 200, skipped.text);
+  assert.equal(skipped.data.skipped_by, "Ben");
+  assert.equal((await call("GET", `/api/tasks/current${qc()}`)).data, null);          // the app moves on, reminders stop
+  assert.equal((await call("POST", `/api/tasks/${key}/out${qc()}`, { form: photoForm("Ben") })).status, 409);
+  assert.equal((await call("POST", `/api/tasks/${key}/skip${qc()}`, { json: { name: "Ana" } })).status, 409);
+  assert.deepEqual((await call("GET", `/api/tasks/leaderboard${qc()}`)).data, coinsBefore);
+  const hist = (await call("GET", `/api/tasks/history${qc()}`)).data.find((r) => r.date_key === key);
+  assert.ok(hist && hist.skipped_at);
+  // a collection already out can't be skipped instead of brought back
+  assert.equal((await call("POST", `/api/tasks/${dateKey(new Date())}/skip${qc()}`, { json: { name: "Ben" } })).status, 409);
+});
+
 test("Sort It pays only for full rounds, a few times a day", async () => {
   const q = qc();
   assert.equal((await call("POST", `/api/quiz/complete${q}`, { json: { name: "Ben", correct: 1, total: 1 } })).status, 400);

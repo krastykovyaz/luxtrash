@@ -1217,7 +1217,9 @@
             // glyph when a proof photo exists for it.
             var whoMarkup = hist && hist.out_by
               ? '<span class="cal-who">' + initials(hist.out_by) + '</span>' + (hasPhotos ? '<span class="cal-cam">\u{1F4F7}</span>' : "")
-              : "";
+              : hist && hist.skipped_at
+                ? '<span class="cal-who skipped" title="' + tr("skippedCalTitle") + '">\u2013</span>'
+                : "";
             cellDiv.innerHTML =
               '<span class="n mono">' + dayNum + '</span>' +
               (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>') +
@@ -1300,6 +1302,7 @@
   var outNameSelect = document.getElementById("outNameSelect");
   var backNameSelect = document.getElementById("backNameSelect");
   var outBtn = document.getElementById("outBtn");
+  var skipBtn = document.getElementById("skipBtn");
   var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
   var currentTask = null;
@@ -1561,12 +1564,13 @@
         // day even arrives. TASK_HISTORY is kept fresh for exactly this
         // check (see loadTaskHistory, sequenced before this ever renders).
         var candHist = TASK_HISTORY[dateKeyOf(cand)];
-        if (candHist && candHist.back_at) continue;
+        if (candHist && (candHist.back_at || candHist.skipped_at)) continue;
         next = cand; nextOffset = i; break;
       }
       backRow.hidden = true;
       backPhoto.setHidden(true);
       reactionsRowEl.hidden = true;
+      skipBtn.hidden = true;
       if (!next) {
         taskDateLabel.textContent = "";
         taskBadges.innerHTML = "";
@@ -1634,6 +1638,8 @@
       syncSelectTrigger(backNameSelect);
     }
 
+    resetSkipBtn();
+    skipBtn.hidden = !!task.out_at;
     if (!task.out_at) {
       outRow.hidden = false;
       outPhoto.setHidden(false);
@@ -1753,6 +1759,42 @@
       })(bit, dx, dy, rot);
     }
   }
+
+  // "Bins are empty": two taps, since it closes the collection for everyone.
+  var skipArmTimer = null;
+  function resetSkipBtn() {
+    clearTimeout(skipArmTimer);
+    skipBtn.classList.remove("confirming");
+    skipBtn.textContent = tr("skipBtn");
+    skipBtn.disabled = false;
+  }
+  skipBtn.addEventListener("click", function () {
+    if (!currentTask || currentTask.out_at) return;
+    if (!skipBtn.classList.contains("confirming")) {
+      skipBtn.classList.add("confirming");
+      skipBtn.textContent = tr("skipConfirm");
+      skipArmTimer = setTimeout(resetSkipBtn, 5000);
+      return;
+    }
+    clearTimeout(skipArmTimer);
+    skipBtn.disabled = true;
+    skipBtn.textContent = tr("skipSending");
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/skip"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: outNameSelect.value || ME || "" })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        return loadTaskHistory().then(loadTask).then(function () {
+          claimStatus.textContent = tr("skipDone");
+        });
+      })
+      .catch(function (e) { resetSkipBtn(); claimStatus.textContent = e.message || tr("skipFailed"); });
+  });
 
   outBtn.addEventListener("click", function () {
     if (!currentTask) return;

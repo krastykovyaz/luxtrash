@@ -60,6 +60,12 @@ function ensureSchema(db, opts) {
   if (taskCols.indexOf("out_reminder_count") === -1) {
     db.exec("ALTER TABLE tasks ADD COLUMN out_reminder_count INTEGER NOT NULL DEFAULT 0");
   }
+  // "Bins are empty — skip": a collection nobody needed to put out. Closes the
+  // task (no reminders, the app moves on) without paying anyone.
+  if (taskCols.indexOf("skipped_at") === -1) {
+    db.exec("ALTER TABLE tasks ADD COLUMN skipped_by TEXT");
+    db.exec("ALTER TABLE tasks ADD COLUMN skipped_at TEXT");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS roster (

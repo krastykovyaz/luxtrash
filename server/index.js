@@ -25,7 +25,7 @@ const secret = require("./secret");
 const push = require("./push");
 const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
-const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -566,6 +566,17 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
   });
 });
 
+// "Bins are empty — skip": closes tonight's collection without anyone taking
+// the bins out, so nobody earns coins and the reminders stop.
+app.post("/api/tasks/:dateKey/skip", writeLimiter, (req, res) => {
+  const name = typeof (req.body || {}).name === "string" ? req.body.name.trim() : "";
+  try {
+    res.json(skipTask(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house)));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // Serves a stored proof photo. 404 with no body when there isn't one —
 // the client treats that as "no photo", not an error worth surfacing.
 app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
@@ -595,8 +606,8 @@ app.get("/api/tasks/history", (req, res) => {
   const rows = req.house.db.prepare(
     `SELECT date_key, codes, out_by, out_at, back_by, back_at,
             out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto,
-            out_photo_taken_at, back_photo_taken_at
-     FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
+            out_photo_taken_at, back_photo_taken_at, skipped_by, skipped_at
+     FROM tasks WHERE out_at IS NOT NULL OR skipped_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
   ).all();
   res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));
 });
