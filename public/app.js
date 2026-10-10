@@ -2605,6 +2605,95 @@
   window.addEventListener("pageshow", function (e) { if (e.persisted) reloadForNewDay(); });
   window.addEventListener("focus", reloadForNewDay);
 
+  // ---- pull down to refresh. An installed iPhone app gets no browser
+  // refresh, and the page scrolls inside #scroller, so the gesture is done
+  // here: pull from the very top past the threshold and let go. ----
+  function refreshEverything() {
+    // A new day or a new version of the app: start completely fresh.
+    if (dateKeyOf(new Date()) !== loadedDay && reloadForNewDay()) return new Promise(function () {});
+    return fetchVersion().then(function (v) {
+      if (v && loadedVersion && v !== loadedVersion && !workInProgress()) {
+        try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+        location.reload();
+        return new Promise(function () {});
+      }
+      var quiet = function (p) { return Promise.resolve(p).catch(function () {}); };
+      return Promise.all([
+        apiFetch(api("/api/roster")).then(function (r) { return r.ok ? r.json() : null; }).then(function (roster) {
+          // Someone joined or left: the rotation changes, so redo everything that depends on it.
+          if (roster && roster.length && roster.join("|") !== ROSTER.join("|")) afterRosterChange(roster);
+        }),
+        loadTaskHistory().then(loadTask),
+        loadLeaderboard(), loadRosterFull(), loadSubscribers(), loadAchievements(), loadReactions(), loadMySubscription(),
+        chatSubview.hidden ? chatRefreshUnread() : chatRefresh()
+      ].map(quiet));
+    });
+  }
+
+  (function pullToRefresh() {
+    var ptr = document.getElementById("ptr");
+    var content = document.getElementById("app");
+    var THRESHOLD = 70, MAX = 110, HOLD = 52;
+    var startX = 0, startY = null, pull = 0, busy = false, decided = false;
+
+    function setPull(px, animate) {
+      pull = px;
+      var tr = animate ? "transform 0.25s ease, opacity 0.25s ease" : "none";
+      content.style.transition = tr;
+      ptr.style.transition = tr;
+      content.style.transform = px ? "translateY(" + px + "px)" : "";
+      ptr.style.opacity = String(Math.min(1, px / THRESHOLD));
+      ptr.style.transform = "translate(-50%, " + (px - 50) + "px) rotate(" + Math.round(px * 3) + "deg)";
+      ptr.classList.toggle("armed", px >= THRESHOLD);
+    }
+    function ignored(target) {
+      return !!(target.closest && target.closest(".select-popup, .chat-lightbox, #taskPhotoModal, textarea, input"));
+    }
+
+    pageScroller.addEventListener("touchstart", function (e) {
+      startY = null;
+      if (busy || e.touches.length !== 1 || pageScroller.scrollTop > 0 || ignored(e.target)) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      decided = false;
+    }, { passive: true });
+
+    pageScroller.addEventListener("touchmove", function (e) {
+      if (startY === null) return;
+      var dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
+      if (!decided) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        decided = true;
+        // A sideways swipe (the week strip, a wide table) or scrolling up isn't a pull.
+        if (Math.abs(dx) > Math.abs(dy) || dy < 0) { startY = null; return; }
+      }
+      if (dy <= 0 || pageScroller.scrollTop > 0) { if (pull) setPull(0); return; }
+      e.preventDefault(); // the pull replaces the rubber-band bounce
+      setPull(Math.min(MAX, dy * 0.5));
+    }, { passive: false });
+
+    function release() {
+      if (startY === null) return;
+      startY = null;
+      if (pull < THRESHOLD) { setPull(0, true); return; }
+      busy = true;
+      setPull(HOLD, true);
+      ptr.style.opacity = "1";
+      ptr.classList.add("spinning");
+      var started = Date.now();
+      refreshEverything().then(function () {
+        // Long enough to see that something happened, even on a fast network.
+        return new Promise(function (r) { setTimeout(r, Math.max(0, 500 - (Date.now() - started))); });
+      }).then(function () {
+        ptr.classList.remove("spinning");
+        setPull(0, true);
+        busy = false;
+      });
+    }
+    pageScroller.addEventListener("touchend", release);
+    pageScroller.addEventListener("touchcancel", release);
+  })();
+
   document.addEventListener("visibilitychange", function () {
     if (reloadForNewDay()) return;
     if (document.hidden) { reloadIfReady(); return; }
