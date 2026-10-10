@@ -2589,7 +2589,24 @@
       if (document.hidden) reloadIfReady();
     });
   }
+  // A new day. Today's date, "tonight", whose week it is and the open task
+  // were all worked out when the app started, and an installed app can stay
+  // open in the background for days — so when the date has moved on, start
+  // fresh (on coming back to the screen, or within a minute if it's open at
+  // midnight), never in the middle of a message, photo or scan.
+  var loadedDay = dateKeyOf(new Date());
+  var reloadForNewDay = function () {
+    if (dateKeyOf(new Date()) === loadedDay || workInProgress()) return false;
+    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+    location.reload();
+    return true;
+  };
+  setInterval(reloadForNewDay, 60 * 1000);
+  window.addEventListener("pageshow", function (e) { if (e.persisted) reloadForNewDay(); });
+  window.addEventListener("focus", reloadForNewDay);
+
   document.addEventListener("visibilitychange", function () {
+    if (reloadForNewDay()) return;
     if (document.hidden) { reloadIfReady(); return; }
     fetchVersion().then(function (v) {
       if (!v) return;
