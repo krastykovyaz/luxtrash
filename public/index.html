@@ -543,6 +543,26 @@
   .chat-pic-gone { font-size: 12px; font-style: italic; color: var(--ink-faint); background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px 10px; }
   .chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
   .chat-reacts { display: flex; gap: 4px; margin-inline-start: auto; }
+  .chat-reacts:empty { display: none; }
+  /* Press-and-hold menu: the message lifted over a dimmed screen, reactions
+     above it and its actions below (like Telegram). */
+  .chat-react-layer { position: fixed; inset: 0; z-index: 70; }
+  .chat-react-backdrop { position: absolute; inset: 0; background: rgba(10, 8, 4, 0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: chatFade 0.15s ease; }
+  .chat-react-clone { position: fixed; margin: 0; max-width: none; overflow: hidden; pointer-events: none; box-shadow: 0 12px 32px rgba(0,0,0,0.55); animation: chatPop 0.16s ease; }
+  .chat-react-bar { position: fixed; display: flex; gap: 2px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 10px 28px rgba(0,0,0,0.5); animation: chatPop 0.16s ease; }
+  .chat-react-bar button { width: 46px; height: 46px; border-radius: 50%; border: none; background: none; font-size: 26px; line-height: 1; cursor: pointer; transition: transform 0.12s ease, background 0.12s ease; }
+  .chat-react-bar button:hover, .chat-react-bar button:focus-visible { transform: scale(1.18); outline: none; background: var(--surface-2); }
+  .chat-react-bar button.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .chat-react-menu { position: fixed; min-width: 190px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 28px rgba(0,0,0,0.5); animation: chatPop 0.16s ease; }
+  .chat-react-menu button { display: flex; justify-content: space-between; gap: 18px; text-align: start; padding: 12px 15px; background: none; border: none; border-top: 1px solid var(--line); font-family: 'Work Sans', sans-serif; font-size: 15px; font-weight: 500; color: var(--ink); cursor: pointer; }
+  .chat-react-menu button:first-child { border-top: none; }
+  .chat-react-menu button:hover, .chat-react-menu button:focus-visible { background: var(--surface-2); outline: none; }
+  .chat-react-menu button.danger { color: var(--wrong); }
+  @keyframes chatPop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+  @keyframes chatFade { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chat-react-backdrop, .chat-react-clone, .chat-react-bar, .chat-react-menu { animation: none; } }
+  /* On touch screens a held message opens the menu, not text selection. */
+  @media (hover: none) { .chat-msg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } }
   .chat-react { background: rgba(0,0,0,0.2); border: 1px solid transparent; border-radius: 999px; padding: 1px 7px; font-family: inherit; font-size: 12px; line-height: 1.55; color: var(--ink-soft); cursor: pointer; opacity: 0.65; font-variant-numeric: tabular-nums; }
   .chat-react:hover { opacity: 1; }
   .chat-react.has { opacity: 1; border-color: var(--line); }
@@ -799,6 +819,11 @@
 <body>
 <div class="hazard-bar hazard-top"></div>
 <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></div>
+<div class="chat-react-layer" id="chatReactLayer" hidden>
+  <div class="chat-react-backdrop" id="chatReactBackdrop"></div>
+  <div class="chat-react-bar" id="chatReactBar" role="toolbar"></div>
+  <div class="chat-react-menu" id="chatReactMenu" role="menu"></div>
+</div>
 <div class="scroller" id="scroller">
 <div class="wrap" id="app">
 
@@ -934,7 +959,7 @@
     <button class="subview-head" id="chatBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="chatEntryLabel"></span></button>
     <div class="chat-id"><span data-i18n="chatPostingAs"></span> <b id="chatMeName">…</b></div>
     <div class="poster chat-thread" id="chatThread" aria-live="polite"></div>
-    <div class="chat-note" data-i18n="chatNote"></div>
+    <div class="chat-note"><span data-i18n="chatNote"></span> <span data-i18n="chatHoldHint"></span></div>
     <div class="chat-composer" id="chatComposer">
       <div class="chat-chip" id="chatReplyBar" hidden>
         <span class="chat-chip-text" id="chatReplyText"></span>

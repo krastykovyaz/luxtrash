@@ -2078,6 +2078,7 @@
     var reacts = document.createElement("div");
     reacts.className = "chat-reacts";
     m.reactions.forEach(function (r) {
+      if (!r.count) return; // unused reactions stay out of sight — press and hold to add one
       var b = document.createElement("button");
       b.type = "button";
       b.className = "chat-react" + (r.count ? " has" : "") + (r.mine ? " on" : "");
@@ -2165,8 +2166,124 @@
     }
     actions.appendChild(chatBuildReacts(m));
     el.appendChild(actions);
+    chatHoldToReact(el, m.id);
     return el;
   }
+
+  // ---- press and hold a message: reactions + actions over a dimmed screen ----
+  var chatReactLayer = document.getElementById("chatReactLayer");
+  var chatReactBar = document.getElementById("chatReactBar");
+  var chatReactMenu = document.getElementById("chatReactMenu");
+  var chatReactClone = null;
+  var CHAT_EMOJI = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}"];
+
+  function chatHoldToReact(el, id) {
+    var timer = null, sx = 0, sy = 0, opened = false;
+    function cancel() { clearTimeout(timer); timer = null; }
+    el.addEventListener("touchstart", function (e) {
+      opened = false;
+      if (e.touches.length !== 1 || e.target.closest("button")) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      timer = setTimeout(function () {
+        timer = null; opened = true;
+        if (navigator.vibrate) navigator.vibrate(12);
+        chatOpenReactMenu(id, el);
+      }, 420);
+    }, { passive: true });
+    el.addEventListener("touchmove", function (e) {
+      if (timer && Math.hypot(e.touches[0].clientX - sx, e.touches[0].clientY - sy) > 10) cancel();
+    }, { passive: true });
+    el.addEventListener("touchend", function (e) { cancel(); if (opened) e.preventDefault(); });
+    el.addEventListener("touchcancel", cancel);
+    // A computer: right-click (or the menu key). Android also sends this on a long press.
+    el.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      if (chatReactLayer.hidden) chatOpenReactMenu(id, el);
+    });
+  }
+
+  function chatCloseReactMenu() {
+    chatReactLayer.hidden = true;
+    if (chatReactClone) { chatReactClone.remove(); chatReactClone = null; }
+  }
+
+  function chatOpenReactMenu(id, el) {
+    var m = chatMessages.filter(function (x) { return x.id === id; })[0];
+    if (!m) return;
+    chatCloseReactMenu();
+    chatReactBar.textContent = "";
+    chatReactMenu.textContent = "";
+
+    var mineEmoji = null;
+    m.reactions.forEach(function (r) { if (r.mine) mineEmoji = r.emoji; });
+    CHAT_EMOJI.forEach(function (emoji) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = emoji;
+      b.setAttribute("aria-label", tr("chatReactLabel") + " " + emoji);
+      b.setAttribute("aria-pressed", emoji === mineEmoji ? "true" : "false");
+      if (emoji === mineEmoji) b.className = "on";
+      b.addEventListener("click", function () { chatCloseReactMenu(); chatReact(id, emoji); });
+      chatReactBar.appendChild(b);
+    });
+
+    function item(label, fn, danger) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.textContent = label;
+      if (danger) b.className = "danger";
+      b.addEventListener("click", function () { chatCloseReactMenu(); fn(); });
+      chatReactMenu.appendChild(b);
+    }
+    item(tr("chatReply"), function () { chatSetReply(m); });
+    if (m.body) item(tr("chatCopy"), function () {
+      var done = function () { chatStatus.textContent = tr("chatCopied"); setTimeout(function () { if (chatStatus.textContent === tr("chatCopied")) chatStatus.textContent = ""; }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(m.body).then(done).catch(function () {});
+    });
+    if (m.mine) item(tr("chatDelete"), function () {
+      chatFetch("/api/chat/messages/" + m.id, { method: "DELETE" }).then(chatRefresh).catch(function () {});
+    }, true);
+
+    // The message itself, lifted above the dimmed screen where it was.
+    var r = el.getBoundingClientRect();
+    chatReactClone = el.cloneNode(true);
+    chatReactClone.classList.remove("flash");
+    chatReactClone.classList.add("chat-react-clone");
+    chatReactClone.removeAttribute("data-id");
+    chatReactClone.style.width = r.width + "px";
+    chatReactClone.style.left = r.left + "px";
+    chatReactLayer.appendChild(chatReactClone);
+    chatReactLayer.hidden = false;
+
+    // Reactions above, actions below, everything kept on screen.
+    var vw = window.innerWidth, vh = window.innerHeight, gap = 8, edge = 12, topEdge = 52;
+    var barH = chatReactBar.offsetHeight, barW = chatReactBar.offsetWidth;
+    var menuH = chatReactMenu.offsetHeight, menuW = chatReactMenu.offsetWidth;
+    var h = Math.max(48, Math.min(r.height, vh - topEdge - edge - barH - menuH - gap * 2));
+    chatReactClone.style.maxHeight = h + "px";
+    var top = Math.min(Math.max(r.top, topEdge + barH + gap), vh - edge - menuH - gap - h);
+    chatReactClone.style.top = top + "px";
+    function across(w) {
+      var x = m.mine ? r.right - w : r.left; // line up with the message's own side
+      return Math.max(edge, Math.min(x, vw - edge - w)) + "px";
+    }
+    chatReactBar.style.top = (top - gap - barH) + "px";
+    chatReactBar.style.left = across(barW);
+    chatReactMenu.style.top = (top + h + gap) + "px";
+    chatReactMenu.style.left = across(menuW);
+    var first = chatReactBar.querySelector("button");
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  document.getElementById("chatReactBackdrop").addEventListener("click", chatCloseReactMenu);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !chatReactLayer.hidden) chatCloseReactMenu(); });
+  // Turning the phone moves everything; the keyboard closing (height only) doesn't.
+  var chatReactWidth = window.innerWidth;
+  window.addEventListener("resize", function () {
+    if (window.innerWidth !== chatReactWidth && !chatReactLayer.hidden) chatCloseReactMenu();
+    chatReactWidth = window.innerWidth;
+  });
 
   function chatRender() {
     var stick = chatStick;
