@@ -1,21 +1,33 @@
-// Free-tier keys get a small per-model daily quota (20 requests/day on
-// gemini-2.5-flash as of Sep 2026), so one busy evening of scanning empties
-// it. Each model has its own quota, so we walk this list and fall through
-// on 429 (quota), 503 (overloaded) and 404 (model retired) — anything else
-// (bad image, auth) is a real error and stops the loop.
-// Override with GEMINI_MODELS="a,b,c" in .env.
+// The one place model names live. Free-tier keys get a small per-model daily
+// quota (20 requests/day on gemini-2.5-flash as of Sep 2026), so one busy
+// evening of scanning empties it. Each model has its own quota, so we walk
+// this list and fall through on 429 (quota), 503 (overloaded) and 404 (model
+// retired) — anything else (bad image, auth) is a real error and stops the loop.
+//
+// Order: stable models first, preview models last; two generations (2.5 and
+// 3.5) and both the flash and flash-lite tiers. Not in here on purpose:
+// gemini-2.0-* (retired) and gemini-3.7-flash (the same backend as 3.8, so no
+// real fallback). Names were checked against the key's models.list on
+// 2026-10-11.
+// Override with GEMINI_MODELS="a,b,c" in .env (nothing else repeats names).
 const DEFAULT_MODELS = [
   "gemini-2.5-flash",
+  "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-flash-lite-latest",
-  "gemini-3-flash-preview",
-  "gemini-3.5-flash"
+  "gemini-3-flash-preview"
 ];
 const MODELS = (process.env.GEMINI_MODELS || "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 if (!MODELS.length) MODELS.push(...DEFAULT_MODELS);
 
 const FALLTHROUGH_STATUSES = new Set([404, 429, 503]);
+
+// A model that answers 404 is gone (or misspelled); asking it on every
+// request just wastes a round trip, so it is skipped for an hour — unless
+// every model is in that state, when asking again is better than a blackout.
+const NOT_FOUND_SKIP_MS = 60 * 60 * 1000;
+const notFoundUntil = new Map();
 
 const PROMPT =
   "You're looking at a photo of one household waste item in a shared house in Luxembourg, " +
@@ -51,7 +63,11 @@ async function checkPhoto(buffer, mimeType) {
 
   let res = null;
   const attempts = [];
-  for (const model of MODELS) {
+  let answeredBy = null;
+  const now = Date.now();
+  const skipping = (m) => (notFoundUntil.get(m) || 0) > now;
+  const candidates = MODELS.every(skipping) ? MODELS : MODELS.filter((m) => !skipping(m));
+  for (const model of candidates) {
     // Auth keys (the current key type — see Google AI Studio's API key
     // docs) authenticate via the x-goog-api-key header, not the old ?key=
     // query param used by legacy standard keys.
@@ -62,11 +78,16 @@ async function checkPhoto(buffer, mimeType) {
       body
     });
     if (res.ok) {
-      if (attempts.length) console.warn(`/api/check: fell back to ${model} after ${attempts.join(", ")}`);
+      answeredBy = model;
       break;
     }
     const text = await res.text().catch(() => "");
     attempts.push(`${model}=${res.status}`);
+    if (res.status === 404) {
+      notFoundUntil.set(model, Date.now() + NOT_FOUND_SKIP_MS);
+      console.warn(`WARNING: Gemini model "${model}" returned 404 NOT_FOUND — skipping it for 1 hour. ` +
+        "Remove or rename it in GEMINI_MODELS (or the default list in server/gemini.js).");
+    }
     if (!FALLTHROUGH_STATUSES.has(res.status)) {
       // Keep the raw upstream body out of the thrown message — it's only
       // for the server log (detail), never forwarded to the client, which
@@ -88,6 +109,7 @@ async function checkPhoto(buffer, mimeType) {
     throw err;
   }
 
+  console.log(`/api/check answered by ${answeredBy}` + (attempts.length ? ` (after ${attempts.join(", ")})` : ""));
   const data = await res.json();
   const text = data && data.candidates && data.candidates[0] && data.candidates[0].content
     && data.candidates[0].content.parts && data.candidates[0].content.parts[0]
@@ -117,4 +139,4 @@ async function checkPhoto(buffer, mimeType) {
   return parsed;
 }
 
-module.exports = { checkPhoto };
+module.exports = { checkPhoto, MODELS };
