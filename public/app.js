@@ -2007,7 +2007,26 @@
   // thread. New messages and late-loading pictures only pull the page down
   // while this holds, so scrolling up to read history is never yanked away.
   var chatStick = true;
-  function chatToBottom() { pageScroller.scrollTop = pageScroller.scrollHeight; }
+  // On a phone the chat is the whole screen, so "the newest message" is the
+  // bottom of the page. On a wide screen it sits inline among the other
+  // sections, so scroll to the newest message itself, not the page's bottom.
+  function chatWide() { return window.matchMedia("(min-width: 900px)").matches; }
+  function chatToBottom() {
+    var last = chatThread.lastElementChild;
+    if (chatWide() && last && !last.classList.contains("chat-empty")) {
+      var composerH = document.getElementById("chatComposer").offsetHeight;
+      var edge = pageScroller.getBoundingClientRect().bottom - composerH - 12;
+      pageScroller.scrollTop += last.getBoundingClientRect().bottom - edge;
+      return;
+    }
+    pageScroller.scrollTop = pageScroller.scrollHeight;
+  }
+  // Is the newest message (about) in view — i.e. should new ones keep it pinned?
+  function chatAtBottom() {
+    var last = chatThread.lastElementChild;
+    if (chatWide() && last) return last.getBoundingClientRect().bottom <= pageScroller.getBoundingClientRect().bottom + 140;
+    return pageScroller.clientHeight + pageScroller.scrollTop >= pageScroller.scrollHeight - 140;
+  }
   // Layout keeps moving for a moment after a send (the textarea shrinks, a
   // keyboard animates, a picture decodes), so pin once now and again as it settles.
   function chatPinSoon() {
@@ -2018,7 +2037,7 @@
   }
   pageScroller.addEventListener("scroll", function () {
     if (chatSubview.offsetParent === null) return;
-    chatStick = pageScroller.clientHeight + pageScroller.scrollTop >= pageScroller.scrollHeight - 140;
+    chatStick = chatAtBottom();
   }, { passive: true });
 
   // On iPhones the on-screen keyboard doesn't shrink the page — iOS just pans it
