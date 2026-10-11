@@ -2686,10 +2686,26 @@
     return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
       !scanSubview.hidden || !sortItSubview.hidden);
   };
+  // Every self-started reload (an update, a new day, a pull-to-refresh) goes
+  // through here. If the chat is open — or a tapped notification has just asked
+  // for it and the page hasn't acted on that yet — the reloaded page is told to
+  // reopen it. Without this, waking up on a new day for a notification tap
+  // could reload before the tap's "open the chat" note was used, and land on Home.
+  var reloadApp = function () {
+    var go = function () {
+      try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+      location.reload();
+    };
+    readOpenIntent().then(function (d) {
+      var wantsChat = false;
+      try { wantsChat = !!(d && intentHouse(d) === HOUSE_SLUG && new URL(d.url).searchParams.get("chat") === "1"); } catch (e) {}
+      if (wantsChat) { try { sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {} }
+      go();
+    }, go);
+  };
   var reloadIfReady = function () {
     if (!updateReady || workInProgress()) return;
-    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
-    location.reload();
+    reloadApp();
   };
   var fetchVersion = function () {
     return fetch("/version", { cache: "no-store" })
@@ -2714,8 +2730,7 @@
   var loadedDay = dateKeyOf(new Date());
   var reloadForNewDay = function () {
     if (dateKeyOf(new Date()) === loadedDay || workInProgress()) return false;
-    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
-    location.reload();
+    reloadApp();
     return true;
   };
   setInterval(reloadForNewDay, 60 * 1000);
@@ -2730,8 +2745,7 @@
     if (dateKeyOf(new Date()) !== loadedDay && reloadForNewDay()) return new Promise(function () {});
     return fetchVersion().then(function (v) {
       if (v && loadedVersion && v !== loadedVersion && !workInProgress()) {
-        try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
-        location.reload();
+        reloadApp();
         return new Promise(function () {});
       }
       var quiet = function (p) { return Promise.resolve(p).catch(function () {}); };
