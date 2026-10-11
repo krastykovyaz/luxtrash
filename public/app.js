@@ -2030,6 +2030,7 @@
   // Layout keeps moving for a moment after a send (the textarea shrinks, a
   // keyboard animates, a picture decodes), so pin once now and again as it settles.
   function chatPinSoon() {
+    chatAnchor = null;
     chatStick = true;
     chatToBottom();
     requestAnimationFrame(chatToBottom);
@@ -2156,7 +2157,7 @@
       var img = document.createElement("img");
       img.className = "chat-pic";
       img.alt = tr("chatPhoto");
-      img.addEventListener("load", function () { if (chatStick) chatToBottom(); });
+      img.addEventListener("load", function () { if (chatAnchor && chatHoldNow) chatHoldNow(); else if (chatStick) chatToBottom(); });
       img.src = api("/api/chat/photo/" + m.id);
       img.addEventListener("click", function () { chatLightboxImg.src = img.src; chatLightbox.hidden = false; });
       el.appendChild(img);
@@ -2186,6 +2187,7 @@
     actions.appendChild(chatBuildReacts(m));
     el.appendChild(actions);
     chatHoldToReact(el, m.id);
+    if (chatObserver) chatObserver.observe(el);
     return el;
   }
 
@@ -2317,6 +2319,7 @@
     }
     var live = {};
     var lastDay = "";
+    var dividerPlaced = false;
     chatMessages.forEach(function (m) {
       var day = dateKeyOf(new Date(m.createdAt));
       if (day !== lastDay) {
@@ -2325,6 +2328,13 @@
         sep.className = "chat-day";
         sep.textContent = day === dateKeyOf(new Date()) ? tr("todayLabel") : fmtLong(new Date(m.createdAt));
         chatThread.appendChild(sep);
+      }
+      if (!dividerPlaced && chatDividerAfter !== null && !m.mine && m.id > chatDividerAfter) {
+        dividerPlaced = true;
+        var mark = document.createElement("div");
+        mark.className = "chat-new";
+        mark.textContent = tr("chatNewMessages");
+        chatThread.appendChild(mark);
       }
       var sig = chatMsgSig(m), rsig = chatReactSig(m), entry = chatEls[m.id];
       if (!entry || entry.sig !== sig) {
@@ -2380,7 +2390,7 @@
       }).join(",");
       chatMessages = data.messages;
       if (sig !== chatSignature) { chatSignature = sig; chatRender(); }
-      chatMarkSeen();
+      chatUnreadEl.hidden = true; // the chat is open; what has been SEEN is tracked as messages scroll into view
       if (chatStatus.textContent === tr("chatLoadFailed")) chatStatus.textContent = "";
     }).catch(function () { chatStatus.textContent = tr("chatLoadFailed"); });
   }
@@ -2388,11 +2398,40 @@
   // Unread badge on the Home button: messages from other devices since this
   // one last had the chat open.
   function chatSeenKey() { return houseKey("binDutyChatSeen"); }
-  function chatMarkSeen() {
-    var top = chatMessages.length ? chatMessages[chatMessages.length - 1].id : 0;
-    try { localStorage.setItem(chatSeenKey(), String(top)); } catch (e) {}
-    chatUnreadEl.hidden = true;
+  // The newest message this device has actually had on screen — not merely
+  // downloaded. null = never opened the chat here (so it opens at the bottom).
+  function chatReadSeen() {
+    try {
+      var v = localStorage.getItem(chatSeenKey());
+      return v === null ? null : (parseInt(v, 10) || 0);
+    } catch (e) { return null; }
   }
+  var chatSeenId = chatReadSeen() || 0;
+  function chatNoteSeen(id) {
+    if (id <= chatSeenId) return;
+    chatSeenId = id;
+    try { localStorage.setItem(chatSeenKey(), String(id)); } catch (e) {}
+  }
+  // A message counts as seen once most of it is above the message box. Used
+  // for the "where you left off" position and the unread badge.
+  var chatObserver = ("IntersectionObserver" in window) ? new IntersectionObserver(function (entries) {
+    if (document.hidden || chatSubview.offsetParent === null) return;
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var id = parseInt(e.target.dataset.id, 10);
+      if (id) chatNoteSeen(id);
+    });
+  }, { root: pageScroller, threshold: 0.6, rootMargin: "0px 0px -90px 0px" }) : null;
+  // Observers only report changes, so after the page was hidden or the chat
+  // reopened, start watching again to catch what is already in view.
+  function chatReobserve() {
+    if (!chatObserver) return;
+    chatObserver.disconnect();
+    Object.keys(chatEls).forEach(function (id) { if (chatEls[id].el.isConnected) chatObserver.observe(chatEls[id].el); });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && chatSubview.offsetParent !== null) chatReobserve();
+  });
   function chatRefreshUnread() {
     var seen = 0;
     try { seen = parseInt(localStorage.getItem(chatSeenKey()), 10) || 0; } catch (e) {}
@@ -2402,17 +2441,47 @@
     }).catch(function () {});
   }
 
+  // Opening the chat puts you where you left off: the first message you
+  // haven't seen, under a "New messages" line — or the bottom if you're up to
+  // date (or have never opened the chat on this device).
+  var chatDividerAfter = null;   // id of the newest message already seen when the chat was opened
+  var chatAnchor = null;         // the "New messages" line, while it is still being held in place
+  ["touchstart", "wheel", "keydown", "mousedown"].forEach(function (t) {
+    pageScroller.addEventListener(t, function () { chatAnchor = null; }, { passive: true });
+  });
+  function chatLand() {
+    var marker = chatThread.querySelector(".chat-new");
+    if (!marker) { chatStick = true; chatToBottom(); chatReobserve(); return; }
+    chatStick = false;
+    chatAnchor = marker;
+    // Pictures above and below keep loading and shifting things; hold the line
+    // in place for a moment, until the reader moves it themselves.
+    var hold = function () {
+      if (chatAnchor !== marker) return;
+      pageScroller.scrollTop += marker.getBoundingClientRect().top - pageScroller.getBoundingClientRect().top - 56;
+    };
+    hold(); requestAnimationFrame(hold);
+    [150, 450, 1000].forEach(function (ms) { setTimeout(hold, ms); });
+    setTimeout(function () { if (chatAnchor === marker) chatAnchor = null; }, 1300);
+    chatHoldNow = hold;
+    chatReobserve();
+  }
+  var chatHoldNow = null;
+
   function chatOpened(quiet) {
     // quiet: wide screens show the chat inline with everything else, so it
     // loads in place without scrolling the page away from where you are.
+    chatDividerAfter = quiet ? null : chatReadSeen();
+    chatSignature = null; // redraw once so the line lands in the right place
     chatStick = !quiet;
-    chatRefresh().then(function () { if (!quiet) chatToBottom(); });
+    chatRefresh().then(function () { if (!quiet) chatLand(); else chatReobserve(); });
     if (!chatTimer) chatTimer = setInterval(function () {
       if (document.hidden || chatSubview.offsetParent === null) return;
       chatRefresh();
     }, 5000);
   }
   function chatClosed() {
+    chatDividerAfter = null; chatAnchor = null;
     if (chatTimer) { clearInterval(chatTimer); chatTimer = null; }
     if (chatMe) chatRefreshUnread();
   }

@@ -101,7 +101,7 @@ window.T = {
     destroyHouseDestroying: "Destroying…", destroyHouseFailed: "Couldn't destroy the house — try again.",
     chatEntryLabel: "Anonymous chat",
     chatPostingAs: "You're posting as", chatHoldHint: "Press and hold a message to react.",
-    chatCopy: "Copy", chatCopied: "Copied.", chatReactLabel: "React", chatNote: "Nobody sees your name — only a codename that changes every Monday. Messages vanish after 30 days, pictures after 7.",
+    chatNewMessages: "New messages", chatCopy: "Copy", chatCopied: "Copied.", chatReactLabel: "React", chatNote: "Nobody sees your name — only a codename that changes every Monday. Messages vanish after 30 days, pictures after 7.",
     chatPhotoExpired: "Picture removed after 7 days",
     chatEmpty: "No messages yet. Say something — nobody will know it's you.",
     chatPlaceholder: "Message the house…", chatSend: "Send", chatAttach: "Attach a picture",
