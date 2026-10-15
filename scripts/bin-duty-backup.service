@@ -1,0 +1,6 @@
+[Unit]
+Description=Nightly backup of Bin Duty data (databases, secret, photos)
+
+[Service]
+Type=oneshot
+ExecStart=/root/projects/bin-duty/scripts/backup.sh
