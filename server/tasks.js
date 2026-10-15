@@ -216,10 +216,15 @@ function confirmBack(db, dateKey, roster, name) {
   return getTaskRow(db, dateKey);
 }
 
+function isSkipped(db, dateKey) {
+  const row = getTaskRow(db, dateKey);
+  return !!(row && row.skipped_at);
+}
+
 function getLeaderboard(db) {
   return db.prepare(
     "SELECT out_by AS name, SUM(coins) AS coins FROM tasks WHERE back_at IS NOT NULL GROUP BY out_by"
   ).all();
 }
 
-module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, getLeaderboard, dateKeyOf };
+module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, isSkipped, getLeaderboard, dateKeyOf };

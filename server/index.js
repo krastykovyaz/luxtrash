@@ -25,7 +25,7 @@ const secret = require("./secret");
 const push = require("./push");
 const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
-const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask } = require("./tasks");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, isSkipped, dateKeyOf } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -571,7 +571,12 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
 app.post("/api/tasks/:dateKey/skip", writeLimiter, (req, res) => {
   const name = typeof (req.body || {}).name === "string" ? req.body.name.trim() : "";
   try {
-    res.json(skipTask(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house)));
+    const task = skipTask(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
+    res.json(task);
+    // Replace the duty reminder still showing on people's phones. After the
+    // response, never in its way.
+    push.sendSkippedPush(req.house.db, task, req.house.language, `/?h=${encodeURIComponent(req.house.publicSlug)}`)
+      .catch((err) => console.error("Skip push threw:", err.message));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -1126,6 +1131,12 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
+    // Skipped because the bins were empty: no reminder about it, by mail or push.
+    const now = new Date();
+    if (isSkipped(defaultDb, dateKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)))) {
+      console.log("Reminder check: tomorrow's collection was skipped (bins empty), no mail or push sent.");
+      return;
+    }
     const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     if (!result.dueTomorrow) {
       console.log("Reminder check: nothing due tomorrow, no mail sent.");

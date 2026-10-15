@@ -101,10 +101,13 @@ async function sendDailyReminderPush(db, roster, lang, url) {
   if (!codes || codes === "HOLIDAY" || !roster.length) return { sent: 0, pruned: 0, errors: [] };
   const label = codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
   const person = personForWeek(tomorrow, roster);
+  // One "duty" notification at a time: a later duty message (the follow-up, or
+  // the "skipped" update) replaces the earlier one instead of stacking.
   return sendToAll(db, {
     title: `${t(lang, "tonightLabel")} ${label}`,
     body: `${t(lang, "dutyMsgHeading")} ${person}`,
-    url: url || "/"
+    url: url || "/",
+    tag: "duty"
   });
 }
 
@@ -113,8 +116,27 @@ async function sendOutFollowUpPush(db, task, lang, url) {
   return sendToAll(db, {
     title: `${t(lang, "outReminderHeading")} — ${label}`,
     body: t(lang, "outReminderPushBody").replace("{label}", label),
-    url: url || "/"
+    url: url || "/",
+    tag: "duty"
   });
+}
+
+// What goes out when a collection is skipped because the bins were empty. It
+// carries the same tag as the duty reminders, so on a phone it REPLACES the
+// reminder that is still sitting there ("take the bins out") with "skipped",
+// without buzzing again.
+function skippedPayload(task, lang, url) {
+  const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  return {
+    title: `${t(lang, "skipPushTitle")} — ${label}`,
+    body: t(lang, "skipPushBody"),
+    url: url || "/",
+    tag: "duty",
+    renotify: false
+  };
+}
+async function sendSkippedPush(db, task, lang, url) {
+  return sendToAll(db, skippedPayload(task, lang, url));
 }
 
 async function sendWeekAheadPush(db, roster, lang, url) {
@@ -125,7 +147,8 @@ async function sendWeekAheadPush(db, roster, lang, url) {
   return sendToAll(db, {
     title: t(lang, "weekAheadSubject"),
     body: t(lang, "weekAheadBody").replace("{name}", person),
-    url: url || "/"
+    url: url || "/",
+    tag: "week"
   });
 }
 
@@ -183,5 +206,5 @@ module.exports = {
   setChatPush, chatPushEnabled, notifyChat,
   isPushServiceUrl, hasRoomFor,
   configure, publicKey, saveSubscription, removeSubscription, sendToAll,
-  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush
+  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush, sendSkippedPush, skippedPayload
 };

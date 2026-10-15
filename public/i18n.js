@@ -156,6 +156,7 @@ window.T = {
     taskLoading: "Checking today's task…", taskNothing: "All caught up — nothing due right now.",
     taskFailed: "Couldn't load the task — try again.",
     confirmOutBtn: "Mark bins out", confirmBackBtn: "Confirm bins back",
+    skipPushTitle: "Bin duty skipped", skipPushBody: "The bins were empty, so there's nothing to take out — no coins this time.",
     skipBtn: "Bins are empty — skip this one", skipConfirm: "Tap again to skip — nobody gets coins for it",
     skipSending: "Skipping…", skipDone: "Skipped — the bins were empty, so no coins this time.",
     skipFailed: "Couldn't skip — try again.", skippedCalTitle: "Skipped — the bins were empty",
