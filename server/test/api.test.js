@@ -184,6 +184,22 @@ test("'bins are empty — skip' closes the collection with no coins and no way t
   assert.equal((await call("POST", `/api/tasks/${dateKey(new Date())}/skip${qc()}`, { json: { name: "Ben" } })).status, 409);
 });
 
+test("a skip can be taken back, by anyone, until the collection passes", async () => {
+  const t = new Date(); t.setDate(t.getDate() + 1);
+  const key = dateKey(t);
+  // (the earlier test left this collection skipped)
+  assert.equal((await call("GET", `/api/tasks/current${qc()}`)).data, null);
+  const undone = await call("POST", `/api/tasks/${key}/unskip${qc()}`, { json: {} });
+  assert.equal(undone.status, 200, undone.text);
+  assert.equal(undone.data.skipped_at, null);
+  assert.equal((await call("GET", `/api/tasks/current${qc()}`)).data.date_key, key);   // open again
+  assert.equal((await call("POST", `/api/tasks/${key}/unskip${qc()}`, { json: {} })).status, 409); // nothing left to undo
+  const out = await call("POST", `/api/tasks/${key}/out${qc()}`, { form: photoForm("Ana") });
+  assert.equal(out.status, 200, out.text);                                                  // and it can be done for real
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  assert.equal((await call("POST", `/api/tasks/${dateKey(y)}/unskip${qc()}`, { json: {} })).status, 400); // a passed date stays as it was
+});
+
 test("Sort It pays only for full rounds, a few times a day", async () => {
   const q = qc();
   assert.equal((await call("POST", `/api/quiz/complete${q}`, { json: { name: "Ben", correct: 1, total: 1 } })).status, 400);

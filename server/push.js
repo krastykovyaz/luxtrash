@@ -135,6 +135,20 @@ function skippedPayload(task, lang, url) {
     renotify: false
   };
 }
+// The skip was taken back: the duty is on again, and this replaces the "skipped" message.
+function unskippedPayload(task, lang, url) {
+  const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  return {
+    title: `${t(lang, "unskipPushTitle")} — ${label}`,
+    body: t(lang, "unskipPushBody"),
+    url: url || "/",
+    tag: "duty",
+    renotify: true
+  };
+}
+async function sendUnskippedPush(db, task, lang, url) {
+  return sendToAll(db, unskippedPayload(task, lang, url));
+}
 async function sendSkippedPush(db, task, lang, url) {
   return sendToAll(db, skippedPayload(task, lang, url));
 }
@@ -206,5 +220,5 @@ module.exports = {
   setChatPush, chatPushEnabled, notifyChat,
   isPushServiceUrl, hasRoomFor,
   configure, publicKey, saveSubscription, removeSubscription, sendToAll,
-  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush, sendSkippedPush, skippedPayload
+  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush, sendSkippedPush, skippedPayload, sendUnskippedPush, unskippedPayload
 };

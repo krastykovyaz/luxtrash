@@ -5,3 +5,6 @@ server/data/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+
+# Claude Code runtime lock files
+.claude/*.lock

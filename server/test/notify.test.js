@@ -20,6 +20,13 @@ test("the 'skipped' push replaces the duty reminder quietly", () => {
   assert.equal(p.url, "/?h=x");
 });
 
+test("taking a skip back sends a message that replaces 'skipped' and does alert", () => {
+  const p = push.unskippedPayload({ codes: "VB" }, "en", "/?h=x");
+  assert.equal(p.tag, "duty");
+  assert.equal(p.renotify, true);
+  assert.match(p.title, /back on/i);
+});
+
 function runPush(data) {
   const shown = [];
   const handlers = {};

@@ -31,3 +31,18 @@ tar -czf "$DEST/photos.tar.gz" -C "$DATA" task-photos chat-photos 2>/dev/null ||
 # Only remove dated folders this script made, older than KEEP_DAYS.
 find "$DEST_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??' -mtime +"$KEEP_DAYS" -exec rm -rf {} +
 echo "Bin Duty backup written to $DEST ($(du -sh "$DEST" | cut -f1))"
+
+# Optional off-site copy, so losing this server doesn't lose the backups too.
+# Off until BIN_DUTY_OFFSITE is set (in /etc/bin-duty-backup.env, which the
+# systemd service reads) to somewhere reachable over ssh with a key, e.g.
+#   BIN_DUTY_OFFSITE=backup@other-host:/backups/bin-duty
+# Only today's folder is sent; the other end keeps what it keeps. If the copy
+# fails the script exits non-zero, so `systemctl status` shows the failure.
+if [ -n "${BIN_DUTY_OFFSITE:-}" ]; then
+  if rsync -a -e "ssh -o BatchMode=yes -o ConnectTimeout=20" "$DEST" "${BIN_DUTY_OFFSITE%/}/"; then
+    echo "Off-site copy sent to ${BIN_DUTY_OFFSITE%/}/$(basename "$DEST")"
+  else
+    echo "WARNING: the off-site copy to ${BIN_DUTY_OFFSITE} FAILED — the local backup is fine." >&2
+    exit 1
+  fi
+fi

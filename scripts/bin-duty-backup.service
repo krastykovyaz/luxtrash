@@ -3,4 +3,6 @@ Description=Nightly backup of Bin Duty data (databases, secret, photos)
 
 [Service]
 Type=oneshot
+# Optional: BIN_DUTY_OFFSITE=user@host:/path (see scripts/backup.sh); the file may be absent.
+EnvironmentFile=-/etc/bin-duty-backup.env
 ExecStart=/root/projects/bin-duty/scripts/backup.sh

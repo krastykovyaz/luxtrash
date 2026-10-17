@@ -216,6 +216,20 @@ function confirmBack(db, dateKey, roster, name) {
   return getTaskRow(db, dateKey);
 }
 
+// Takes a skip back: the collection is open again. Only until its date passes,
+// and only while nobody has started it (a skipped task can't have been taken out).
+function unskipTask(db, dateKey, flatSchedule) {
+  openCollection(dateKey, flatSchedule);
+  const existing = getTaskRow(db, dateKey);
+  if (!existing || !existing.skipped_at) {
+    const err = new Error("That collection wasn't skipped.");
+    err.status = 409;
+    throw err;
+  }
+  db.prepare("UPDATE tasks SET skipped_by = NULL, skipped_at = NULL WHERE date_key = ?").run(dateKey);
+  return getTaskRow(db, dateKey);
+}
+
 function isSkipped(db, dateKey) {
   const row = getTaskRow(db, dateKey);
   return !!(row && row.skipped_at);
@@ -227,4 +241,4 @@ function getLeaderboard(db) {
   ).all();
 }
 
-module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, isSkipped, getLeaderboard, dateKeyOf };
+module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, unskipTask, isSkipped, getLeaderboard, dateKeyOf };

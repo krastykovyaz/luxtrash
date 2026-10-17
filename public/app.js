@@ -546,6 +546,32 @@
 
   document.getElementById("fullCalendarJumpBtn").addEventListener("click", function () { showView("roster"); });
 
+  // The collection calendar is a fixed list of dates. When what's left of it is
+  // about a month or less (or it has run out), say so on Home and Roster — after
+  // its last date there are no tasks or reminders, which is easy to miss.
+  function renderScheduleNote() {
+    var last = "";
+    Object.keys(SCHEDULE || {}).forEach(function (mk) {
+      Object.keys(SCHEDULE[mk]).forEach(function (d) {
+        if (!SCHEDULE[mk][d] || SCHEDULE[mk][d] === "HOLIDAY") return;
+        var k = mk + "-" + String(d).padStart(2, "0");
+        if (k > last) last = k;
+      });
+    });
+    var text = "";
+    if (last) {
+      var end = new Date(last + "T00:00:00");
+      var now = new Date();
+      var daysLeft = Math.round((end - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+      if (daysLeft <= 30) text = fmt(daysLeft < 0 ? "scheduleEnded" : "scheduleEnds", { date: fmtLong(end) });
+    }
+    ["scheduleNoteHome", "scheduleNoteRoster"].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.textContent = text;
+      el.hidden = !text;
+    });
+  }
+
   function applyLang() {
     var meta = window.LANGS.find(function (l) { return l.code === currentLang; }) || window.LANGS[0];
     document.documentElement.setAttribute("dir", meta.dir);
@@ -594,6 +620,7 @@
     renderDonateSelect();
     loadAchievements();
     loadReactions();
+    renderScheduleNote();
   }
 
   function renderBadges(container, codes) {
@@ -1303,6 +1330,9 @@
   var backNameSelect = document.getElementById("backNameSelect");
   var outBtn = document.getElementById("outBtn");
   var skipBtn = document.getElementById("skipBtn");
+  var skipNotice = document.getElementById("skipNotice");
+  var skipNoticeText = document.getElementById("skipNoticeText");
+  var unskipBtn = document.getElementById("unskipBtn");
   var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
   var currentTask = null;
@@ -1533,6 +1563,37 @@
     fillNameSelect(backNameSelect, currentTask && currentTask.out_by);
   }
 
+  // "Alex skipped today's bins — they were empty. [Undo skip]" — shown for a
+  // skipped collection until its date has passed, so a skip made by mistake
+  // (or by someone who shouldn't have) is visible and can be taken back.
+  var skippedDateKey = null;
+  function renderSkipNotice() {
+    var todayKey = dateKeyOf(new Date());
+    var found = null;
+    Object.keys(TASK_HISTORY).sort().forEach(function (k) {
+      var r = TASK_HISTORY[k];
+      if (!found && r.skipped_at && k >= todayKey) found = r;
+    });
+    skippedDateKey = found ? found.date_key : null;
+    skipNotice.hidden = !found;
+    if (!found) return;
+    skipNoticeText.textContent = found.date_key === todayKey
+      ? fmt("skippedNotice", { name: found.skipped_by || "?" })
+      : fmt("skippedNoticeLater", { name: found.skipped_by || "?", date: fmtShort(new Date(found.date_key + "T00:00:00")) + " " + new Date(found.date_key + "T00:00:00").getDate() });
+  }
+  unskipBtn.addEventListener("click", function () {
+    if (!skippedDateKey) return;
+    unskipBtn.disabled = true;
+    apiFetch(api("/api/tasks/" + skippedDateKey + "/unskip"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () { return loadTaskHistory().then(loadTask); })
+      .catch(function (e) { claimStatus.textContent = e.message || tr("unskipFailed"); })
+      .finally(function () { unskipBtn.disabled = false; });
+  });
+
   function renderTask(task) {
     currentTask = task;
     // A picked-but-not-yet-submitted photo belongs to one specific task; if
@@ -1545,6 +1606,7 @@
       backPhoto.reset();
       lastRenderedTaskKey = taskKey;
     }
+    renderSkipNotice();
     var homeDutyAvatar = document.getElementById("homeDutyAvatar");
     var homeHero = document.getElementById("homeHero");
     var reactionsRowEl = document.getElementById("reactionsRow");
@@ -1789,9 +1851,7 @@
         return r.json();
       })
       .then(function () {
-        return loadTaskHistory().then(loadTask).then(function () {
-          claimStatus.textContent = tr("skipDone");
-        });
+        return loadTaskHistory().then(loadTask);
       })
       .catch(function (e) { resetSkipBtn(); claimStatus.textContent = e.message || tr("skipFailed"); });
   });
@@ -2310,7 +2370,7 @@
     var stick = chatStick;
     chatThread.textContent = "";
     if (!chatMessages.length) {
-      chatEls = {};
+      chatForgetAll();
       var empty = document.createElement("div");
       empty.className = "chat-empty";
       empty.textContent = tr("chatEmpty");
@@ -2338,6 +2398,7 @@
       }
       var sig = chatMsgSig(m), rsig = chatReactSig(m), entry = chatEls[m.id];
       if (!entry || entry.sig !== sig) {
+        if (entry && chatObserver) chatObserver.unobserve(entry.el); // the old copy is about to be replaced
         entry = chatEls[m.id] = { el: chatBuildMsg(m), sig: sig, rsig: rsig };
       } else if (entry.rsig !== rsig) {
         var old = entry.el.querySelector(".chat-reacts");
@@ -2347,10 +2408,19 @@
       live[m.id] = true;
       chatThread.appendChild(entry.el);
     });
-    Object.keys(chatEls).forEach(function (id) { if (!live[id]) delete chatEls[id]; });
+    Object.keys(chatEls).forEach(function (id) {
+      if (live[id]) return;
+      if (chatObserver) chatObserver.unobserve(chatEls[id].el); // deleted or expired: stop watching it
+      delete chatEls[id];
+    });
     if (stick) chatToBottom();
   }
-  function chatRerender() { chatSignature = null; chatEls = {}; if (chatMe) chatRender(); }
+  // Drop every cached message (and stop watching them) — a full redraw.
+  function chatForgetAll() {
+    if (chatObserver) chatObserver.disconnect();
+    chatEls = {};
+  }
+  function chatRerender() { chatSignature = null; chatForgetAll(); if (chatMe) chatRender(); }
 
   function chatReact(id, emoji) {
     chatFetch("/api/chat/messages/" + id + "/reaction", {
@@ -2770,8 +2840,19 @@
   // or quiz). An open chat is reopened after. ----
   var updateReady = false;
   var loadedVersion = null;
+  // Is something half-done on screen that a restart would throw away? Text
+  // typed in ANY visible field (a name, an email, a code, an amount, a
+  // message), an attached photo, or an open scan / quiz. (A focused but empty
+  // field has nothing to lose — and on iPhones the chat box stays focused.)
+  var typedText = function () {
+    var fields = document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=button]), textarea');
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i].offsetParent !== null && String(fields[i].value || "").trim()) return true;
+    }
+    return false;
+  };
   var workInProgress = function () {
-    return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
+    return !!(typedText() || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
       !scanSubview.hidden || !sortItSubview.hidden);
   };
   // Every self-started reload (an update, a new day, a pull-to-refresh) goes

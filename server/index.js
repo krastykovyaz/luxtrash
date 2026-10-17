@@ -25,7 +25,7 @@ const secret = require("./secret");
 const push = require("./push");
 const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
-const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, isSkipped, dateKeyOf } = require("./tasks");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, unskipTask, isSkipped, dateKeyOf } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -131,7 +131,12 @@ const buildLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: 
 const createHouseLimiter = rateLimit({ windowMs: 24 * 60 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false });
 // Every API call, reads included — far above what the app does (chat polls
 // every 5 s), low enough to stop scripted scraping or table-filling.
-const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 240, standardHeaders: true, legacyHeaders: false });
+// Looking is cheap and a whole house often shares one wifi address (every open
+// chat polls every 5 s), so reads get a roomier allowance than writes.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: (req) => (req.method === "GET" ? 900 : 240),
+  standardHeaders: true, legacyHeaders: false
+});
 // Only lookups of houses that DON'T exist count — guessing invite codes.
 const houseGuessLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
@@ -577,6 +582,19 @@ app.post("/api/tasks/:dateKey/skip", writeLimiter, (req, res) => {
     // response, never in its way.
     push.sendSkippedPush(req.house.db, task, req.house.language, `/?h=${encodeURIComponent(req.house.publicSlug)}`)
       .catch((err) => console.error("Skip push threw:", err.message));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Takes a skip back, until the collection's date passes — so a skip by mistake
+// (or by someone who shouldn't have) can be undone by anyone in the house.
+app.post("/api/tasks/:dateKey/unskip", writeLimiter, (req, res) => {
+  try {
+    const task = unskipTask(req.house.db, req.params.dateKey, flatScheduleFor(req.house));
+    res.json(task);
+    push.sendUnskippedPush(req.house.db, task, req.house.language, `/?h=${encodeURIComponent(req.house.publicSlug)}`)
+      .catch((err) => console.error("Unskip push threw:", err.message));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -1131,6 +1149,13 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
+    // The calendar is a fixed list of dates; shout in the log well before it runs out.
+    const lastDate = Object.keys(DEFAULT_FLAT_SCHEDULE).sort().pop();
+    if (lastDate) {
+      const [ly, lm, ld] = lastDate.split("-").map(Number);
+      const left = Math.round((new Date(ly, lm - 1, ld) - new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 86400000);
+      if (left <= 30) console.warn(`WARNING: the collection calendar ${left < 0 ? "ran out" : "ends"} on ${lastDate} (${left} days) — add the new dates in server/rotation.js, or there will be no tasks or reminders.`);
+    }
     // Skipped because the bins were empty: no reminder about it, by mail or push.
     const now = new Date();
     if (isSkipped(defaultDb, dateKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)))) {
