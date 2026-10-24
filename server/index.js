@@ -19,11 +19,13 @@ const cron = require("node-cron");
 const { getDb, DEFAULT_SLUG, destroyHouseDb, taskPhotoDir } = require("./db");
 const houses = require("./houses");
 const { checkPhoto } = require("./gemini");
-const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail } = require("./mailer");
+const { sendDailyReminders, sendOutFollowUp, sendWeekAheadNotices, sendCheckResult, sendConfirmationEmail, sendLoginCodeEmail } = require("./mailer");
+const auth = require("./auth");
+const secret = require("./secret");
 const push = require("./push");
 const chat = require("./chat");
 const { LANGS, t } = require("./i18n");
-const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack } = require("./tasks");
+const { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, unskipTask, isSkipped, dateKeyOf } = require("./tasks");
 const { SCHEDULE, DEFAULT_FLAT_SCHEDULE } = require("./rotation");
 const coins = require("./coins");
 
@@ -71,9 +73,52 @@ function flatScheduleFor(house) {
   return flat;
 }
 
+// Links that go out in emails or link previews are built from this, never
+// from the request's Host header (which the sender of the request controls).
+const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+function publicOrigin(req) {
+  return PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+}
+
+// Async route handlers: a rejected promise goes to the error handler at the
+// bottom instead of becoming an unhandled rejection that stops the process.
+function wrapAsync(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+// Streams a stored file; a file that vanishes mid-read ends the response
+// instead of throwing an unhandled stream error.
+function sendFile(res, file) {
+  fs.createReadStream(file)
+    .on("error", () => { if (!res.headersSent) res.status(404); res.end(); })
+    .pipe(res);
+}
+
 const app = express();
 app.set("trust proxy", 1); // behind nginx — rate limiting needs the real client IP, not nginx's
-app.use(helmet({ contentSecurityPolicy: false })); // CSP needs a real policy pass against this page's inline <style> + Google Fonts; everything else (HSTS, frameguard, no-sniff) applies as-is
+// Content-Security-Policy: scripts only from this site (the page has no inline
+// script or handlers), styles from here plus the page's own <style> and Google
+// Fonts, pictures from here or the page's own blob:/data: previews. A stray
+// uploaded file can then never run script even if it slipped through.
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      "default-src": ["'self'"],
+      "script-src": ["'self'"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      "font-src": ["'self'", "https://fonts.gstatic.com"],
+      "img-src": ["'self'", "data:", "blob:"],
+      "connect-src": ["'self'"],
+      "worker-src": ["'self'"],
+      "manifest-src": ["'self'"],
+      "object-src": ["'none'"],
+      "base-uri": ["'self'"],
+      "form-action": ["'self'"],
+      "frame-ancestors": ["'none'"]
+    }
+  }
+}));
 app.use(express.json());
 
 // Generous limits for a house of a handful of people, tight enough to stop
@@ -82,6 +127,29 @@ const checkLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: 
 const writeLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 const mailLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
 const buildLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+// Building houses: each one is a new database file, so a handful a day per address.
+const createHouseLimiter = rateLimit({ windowMs: 24 * 60 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false });
+// Every API call, reads included — far above what the app does (chat polls
+// every 5 s), low enough to stop scripted scraping or table-filling.
+// Looking is cheap and a whole house often shares one wifi address (every open
+// chat polls every 5 s), so reads get a roomier allowance than writes.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: (req) => (req.method === "GET" ? 900 : 240),
+  standardHeaders: true, legacyHeaders: false
+});
+// Only lookups of houses that DON'T exist count — guessing invite codes.
+const houseGuessLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (req, res) => !res.locals.houseNotFound,
+  message: { error: "Too many wrong house codes — wait a few minutes and try again.", code: "TOO_MANY_GUESSES" }
+});
+// Wrong sign-in codes per address (auth.js also caps them per name).
+const codeGuessLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: "Too many wrong codes — try again later.", code: "AUTH_LOCKED" }
+});
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -100,6 +168,7 @@ function resolveHouse(req, res, next) {
   }
   const row = houses.getHouse(raw);
   if (!row) {
+    res.locals.houseNotFound = true;
     return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
   }
   // The original house's public slug still opens its original database —
@@ -119,10 +188,12 @@ function resolveHouse(req, res, next) {
 
 // --- Build / look up a house (unscoped — these resolve which house to use,
 // so they run before resolveHouse would even make sense) ---
-app.post("/api/houses", buildLimiter, (req, res) => {
+app.use("/api", apiLimiter);
+
+app.post("/api/houses", buildLimiter, createHouseLimiter, (req, res) => {
   const body = req.body || {};
   try {
-    const { house, ownerToken } = houses.createHouse({ name: body.name, city: body.city, language: body.language });
+    const { house, ownerToken } = houses.createHouse({ name: body.name, city: body.city, language: VALID_LANGS.has(body.language) ? body.language : "en" });
     // ownerToken is the builder's proof of ownership — returned only here,
     // once; the browser keeps it, and it's what DELETE below checks.
     res.status(201).json({ slug: house.slug, name: house.name, city: house.city, language: house.language, ownerToken });
@@ -155,9 +226,10 @@ app.delete("/api/houses/:slug", buildLimiter, (req, res) => {
   }
 });
 
-app.get("/api/houses/:slug", (req, res) => {
+app.get("/api/houses/:slug", houseGuessLimiter, (req, res) => {
   const house = houses.getHouse(req.params.slug.toLowerCase());
   if (!house) {
+    res.locals.houseNotFound = true;
     return res.status(404).json({ error: "That house doesn't exist. Check the link or code.", code: "HOUSE_NOT_FOUND" });
   }
   const db = house.is_original ? defaultDb : getDb(house.slug);
@@ -170,13 +242,50 @@ app.get("/api/houses/:slug", (req, res) => {
 // static page/asset requests (GET / , /app.js, ...), where a bad ?h= on
 // the page URL would hijack the whole page load into a raw JSON 404
 // instead of letting index.html load and show its own "not found" state.
-app.use("/api", resolveHouse);
+app.use("/api", houseGuessLimiter, resolveHouse);
+
+// Who this request is signed in as (a name proven with an emailed code), or
+// null. Only the few routes that act on behalf of a protected name look at it.
+app.use("/api", (req, res, next) => {
+  const token = req.get("x-auth-token");
+  req.authName = token ? auth.sessionName(req.house.db, token) : null;
+  next();
+});
+
+// A protected name (one with a confirmed email) can only be acted for by a
+// device that signed in as it. Open names pass straight through.
+function canActAs(req, name) {
+  return !auth.isLocked(req.house.db, name) || req.authName === name;
+}
+function isHouseOwner(req) {
+  return req.house.slug !== DEFAULT_SLUG && houses.isOwner(req.house.publicSlug, req.get("x-owner-token"));
+}
+
+function requireSignedIn(req, res, name) {
+  if (!auth.isLocked(req.house.db, name) || req.authName === name) return true;
+  res.status(401).json({ error: "Sign in as " + name + " with the emailed code first.", code: "AUTH_REQUIRED" });
+  return false;
+}
 
 // --- Camera bin-check (Gemini) ---
 // multer.memoryStorage() above means the photo only ever exists as an
 // in-memory buffer for this one request — it's never written to disk or a
 // database, and is discarded the moment the response is sent.
+const SCAN_COINS_PER_DAY = 10;
+const SCANS_PER_HOUSE_PER_DAY = 80;   // the Gemini quota is shared by every house
+const scanCounts = new Map();         // "<day>|<house>" -> scans
+function scanSigInput(r) {
+  return `scan|${r.code}|${r.item || ""}|${r.why || ""}`;
+}
+
 app.post("/api/check", checkLimiter, (req, res) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const countKey = `${day}|${req.house.slug}`;
+  if ((scanCounts.get(countKey) || 0) >= SCANS_PER_HOUSE_PER_DAY) {
+    return res.status(429).json({ error: "This house has used today's scans — try again tomorrow.", code: "GEMINI_BUSY" });
+  }
+  for (const k of scanCounts.keys()) if (!k.startsWith(day)) scanCounts.delete(k);
+  scanCounts.set(countKey, (scanCounts.get(countKey) || 0) + 1);
   upload.single("photo")(req, res, async (err) => {
     if (err) {
       if (err.code === "LIMIT_FILE_SIZE") {
@@ -194,10 +303,13 @@ app.post("/api/check", checkLimiter, (req, res) => {
       // nobody's picked who they are.
       const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
       let unlocked = [];
-      if (name && currentRoster(req.house.db).includes(name)) {
+      if (name && currentRoster(req.house.db).includes(name) && canActAs(req, name) &&
+          coins.countToday(req.house.db, name, "scan") < SCAN_COINS_PER_DAY) {
         unlocked = coins.afterScan(req.house.db, name);
       }
-      res.json({ ...result, unlocked });
+      // Signed, so "email me this result" can only ever send what was really
+      // returned here — not any text someone wants mailed from this server.
+      res.json({ ...result, unlocked, sig: secret.sign(scanSigInput(result)) });
     } catch (checkErr) {
       console.error(
         `/api/check failed — mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes, ` +
@@ -213,7 +325,7 @@ app.post("/api/check", checkLimiter, (req, res) => {
 // Emails a copy of one already-returned check result. Takes the result back
 // from the client rather than re-running Gemini — this is just "send what
 // you already showed me", not a second classification.
-app.post("/api/check/email", mailLimiter, async (req, res) => {
+app.post("/api/check/email", mailLimiter, wrapAsync(async (req, res) => {
   const body = req.body || {};
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const lang = VALID_LANGS.has(body.lang) ? body.lang : "en";
@@ -227,6 +339,9 @@ app.post("/api/check/email", mailLimiter, async (req, res) => {
   if (!/^[MEPVBR]$/.test(code) || !why) {
     return res.status(400).json({ error: "Nothing to send yet — check a photo first." });
   }
+  if (!secret.verify(scanSigInput({ code, item: body.item, why: body.why }), body.sig)) {
+    return res.status(400).json({ error: "Only a result from a real scan can be emailed.", code: "BAD_SIGNATURE" });
+  }
   try {
     await sendCheckResult(email, lang, { item, code, why });
     res.json({ ok: true });
@@ -234,7 +349,7 @@ app.post("/api/check/email", mailLimiter, async (req, res) => {
     const status = err.code === "NO_SMTP" ? 503 : 502;
     res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
   }
-});
+}));
 
 // --- Collection schedule — the original house's is the hardcoded, real
 // Luxembourg calendar in rotation.js; a custom house's is whatever's in its
@@ -272,6 +387,7 @@ app.patch("/api/roster/:name", writeLimiter, (req, res) => {
   if (!roster.includes(req.params.name)) {
     return res.status(404).json({ error: "That name isn't on the roster." });
   }
+  if (!requireSignedIn(req, res, req.params.name)) return;
   const raw = req.body && req.body.occupation;
   const occupation = typeof raw === "string" ? raw.trim().slice(0, MAX_OCCUPATION_LENGTH) : "";
   if (occupation && UNSAFE_NAME_CHARS.test(occupation)) {
@@ -308,13 +424,38 @@ app.delete("/api/roster/:name", writeLimiter, (req, res) => {
   if (roster.length <= 1) {
     return res.status(400).json({ error: "At least one housemate has to stay on the roster." });
   }
+  // A protected name can only be removed by that person (or whoever built the house).
+  if (roster.includes(name) && !canActAs(req, name) && !isHouseOwner(req)) {
+    return res.status(401).json({ error: name + " is protected — only they (signed in) or the house's builder can remove them.", code: "AUTH_REQUIRED" });
+  }
   req.house.db.prepare("DELETE FROM roster WHERE name = ?").run(name);
+  // Their email reminders and sign-ins go with them.
+  req.house.db.prepare("DELETE FROM accounts WHERE name = ?").run(name);
+  auth.revokeName(req.house.db, name);
   res.json(currentRoster(req.house.db));
 });
 
 // --- Bin duty tasks: two-step out/back confirmation, each optionally with
 // a proof photo (bin at the curb / bin back in place) ---
 const PHOTO_MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heic" };
+
+// The type comes from the file's own bytes, never from what the client says
+// it is — a "photo" declared as text/html would otherwise be served back as a
+// web page on this site.
+function photoKind(file) {
+  const image = chat.sniffImage(file.buffer);
+  if (image) return image.mime;
+  const b = file.buffer;
+  if (b.length > 12 && b.slice(4, 8).toString("latin1") === "ftyp" && /^(heic|heix|hevc|heif|mif1|msf1)$/.test(b.slice(8, 12).toString("latin1"))) return "image/heic";
+  return null;
+}
+function rejectNonImage(req, res) {
+  if (!req.file) return false;
+  const mime = photoKind(req.file);
+  if (!mime) { res.status(400).json({ error: "That file isn't a photo.", code: "NOT_AN_IMAGE" }); return true; }
+  req.file.mimetype = mime;
+  return false;
+}
 
 function savePhoto(house, dateKey, which, buffer, mime) {
   const ext = PHOTO_MIME_EXT[mime] || "jpg";
@@ -365,6 +506,7 @@ app.post("/api/tasks/:dateKey/out", writeLimiter, (req, res) => {
       const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
       return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
     }
+    if (rejectNonImage(req, res)) return;
     const name = req.body && req.body.name;
     try {
       const row = confirmOut(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
@@ -398,6 +540,7 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
       const status = uploadErr.code === "LIMIT_FILE_SIZE" ? 413 : 400;
       return res.status(status).json({ error: "Couldn't read that photo.", code: uploadErr.code || "UPLOAD_ERROR" });
     }
+    if (rejectNonImage(req, res)) return;
     const name = req.body && req.body.name;
     try {
       const row = confirmBack(req.house.db, req.params.dateKey, currentRoster(req.house.db), name);
@@ -428,6 +571,35 @@ app.post("/api/tasks/:dateKey/back", writeLimiter, (req, res) => {
   });
 });
 
+// "Bins are empty — skip": closes tonight's collection without anyone taking
+// the bins out, so nobody earns coins and the reminders stop.
+app.post("/api/tasks/:dateKey/skip", writeLimiter, (req, res) => {
+  const name = typeof (req.body || {}).name === "string" ? req.body.name.trim() : "";
+  try {
+    const task = skipTask(req.house.db, req.params.dateKey, currentRoster(req.house.db), name, flatScheduleFor(req.house));
+    res.json(task);
+    // Replace the duty reminder still showing on people's phones. After the
+    // response, never in its way.
+    push.sendSkippedPush(req.house.db, task, req.house.language, `/?h=${encodeURIComponent(req.house.publicSlug)}`)
+      .catch((err) => console.error("Skip push threw:", err.message));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Takes a skip back, until the collection's date passes — so a skip by mistake
+// (or by someone who shouldn't have) can be undone by anyone in the house.
+app.post("/api/tasks/:dateKey/unskip", writeLimiter, (req, res) => {
+  try {
+    const task = unskipTask(req.house.db, req.params.dateKey, flatScheduleFor(req.house));
+    res.json(task);
+    push.sendUnskippedPush(req.house.db, task, req.house.language, `/?h=${encodeURIComponent(req.house.publicSlug)}`)
+      .catch((err) => console.error("Unskip push threw:", err.message));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // Serves a stored proof photo. 404 with no body when there isn't one —
 // the client treats that as "no photo", not an error worth surfacing.
 app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
@@ -440,8 +612,9 @@ app.get("/api/tasks/:dateKey/photo/:which", (req, res) => {
   const file = path.join(taskPhotoDir(req.house.slug), row.photo);
   if (!fs.existsSync(file)) return res.status(404).end();
   res.set("Cache-Control", "private, max-age=86400");
-  res.type(row.mime || "image/jpeg");
-  fs.createReadStream(file).pipe(res);
+  // Older rows stored whatever type the uploader claimed — only ever answer as an image.
+  res.type(PHOTO_MIME_EXT[row.mime] ? row.mime : "application/octet-stream");
+  sendFile(res, file);
 });
 
 app.get("/api/tasks/leaderboard", (req, res) => {
@@ -456,8 +629,8 @@ app.get("/api/tasks/history", (req, res) => {
   const rows = req.house.db.prepare(
     `SELECT date_key, codes, out_by, out_at, back_by, back_at,
             out_photo IS NOT NULL AS hasOutPhoto, back_photo IS NOT NULL AS hasBackPhoto,
-            out_photo_taken_at, back_photo_taken_at
-     FROM tasks WHERE out_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
+            out_photo_taken_at, back_photo_taken_at, skipped_by, skipped_at
+     FROM tasks WHERE out_at IS NOT NULL OR skipped_at IS NOT NULL ORDER BY date_key DESC LIMIT 400`
   ).all();
   res.json(rows.map((r) => ({ ...r, hasOutPhoto: !!r.hasOutPhoto, hasBackPhoto: !!r.hasBackPhoto })));
 });
@@ -491,6 +664,7 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
   if (from === to) {
     return res.status(400).json({ error: "Pick someone else to give coins to." });
   }
+  if (!requireSignedIn(req, res, from)) return;
   if (!Number.isInteger(amount) || amount <= 0 || amount > 1000) {
     return res.status(400).json({ error: "Amount has to be a whole number between 1 and 1000." });
   }
@@ -507,6 +681,9 @@ app.post("/api/coins/donate", writeLimiter, (req, res) => {
 // picked who they are locally. A perfect round pays out once; nothing stops
 // someone re-running easy rounds for coins beyond "it isn't very many
 // coins" — same trust model as the rest of this app.
+const QUIZ_MIN_ITEMS = 10;
+const QUIZ_AWARDS_PER_DAY = 3;
+
 app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   const body = req.body || {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -515,10 +692,12 @@ app.post("/api/quiz/complete", writeLimiter, (req, res) => {
   if (!currentRoster(req.house.db).includes(name)) {
     return res.status(400).json({ error: "That name isn't on the roster." });
   }
-  if (!Number.isInteger(correct) || !Number.isInteger(total) || total <= 0 || correct > total) {
+  if (!requireSignedIn(req, res, name)) return;
+  // A real round is the whole item list (18 today); a few perfect rounds a day pay out.
+  if (!Number.isInteger(correct) || !Number.isInteger(total) || total < QUIZ_MIN_ITEMS || total > 100 || correct > total) {
     return res.status(400).json({ error: "That doesn't look like a real round result." });
   }
-  if (correct < total) {
+  if (correct < total || coins.countToday(req.house.db, name, "sortit") >= QUIZ_AWARDS_PER_DAY) {
     return res.json({ awarded: false, unlocked: [] });
   }
   const unlocked = coins.afterPerfectRound(req.house.db, name);
@@ -545,6 +724,7 @@ app.post("/api/reactions/:dateKey", writeLimiter, (req, res) => {
   if (!REACTION_EMOJI.has(emoji)) {
     return res.status(400).json({ error: "Unknown reaction." });
   }
+  if (!requireSignedIn(req, res, name)) return;
   req.house.db.prepare(
     "INSERT INTO reactions (date_key, name, emoji, created_at) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT(date_key, name) DO UPDATE SET emoji = excluded.emoji, created_at = excluded.created_at"
@@ -563,7 +743,7 @@ app.get("/api/subscribe", (req, res) => {
   res.json(rows);
 });
 
-app.post("/api/subscribe", mailLimiter, async (req, res) => {
+app.post("/api/subscribe", mailLimiter, wrapAsync(async (req, res) => {
   const body = req.body || {};
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -575,7 +755,25 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
   if (!EMAIL_RE.test(email)) {
     return res.status(400).json({ error: "That doesn't look like a valid email address." });
   }
+  if (!requireSignedIn(req, res, name)) return;
 
+  const existing = req.house.db.prepare("SELECT name, confirmed FROM accounts WHERE email = ?").get(email);
+  if (existing && existing.confirmed && existing.name !== name) {
+    // Re-registering someone's confirmed address under another name would
+    // quietly take it (and the protection it gives) away from them.
+    return res.status(409).json({ error: "That email is already used by another housemate.", code: "EMAIL_TAKEN" });
+  }
+  if (existing && existing.confirmed && existing.name === name) {
+    // Already confirmed for this name: just the language. Re-confirming would
+    // drop the protection until the new link is clicked.
+    req.house.db.prepare("UPDATE accounts SET language = ? WHERE email = ?").run(language, email);
+    return res.json({ pending: false, subscribed: true });
+  }
+
+  // The first email on an open name: this device is setting the name up, so
+  // it gets signed in as it — a session that only counts once THIS address is
+  // the one confirmed (see auth.js).
+  const wasOpen = !auth.isLocked(req.house.db, name) && req.authName !== name;
   const token = crypto.randomBytes(24).toString("hex");
   req.house.db.prepare(
     "INSERT INTO accounts (email, name, language, created_at, confirmed, confirm_token) VALUES (?, ?, ?, ?, 0, ?) " +
@@ -584,16 +782,16 @@ app.post("/api/subscribe", mailLimiter, async (req, res) => {
 
   // Always carries ?h= now — there's no implicit default house left for a
   // bare confirm link to fall back to.
-  const confirmUrl = `${req.protocol}://${req.get("host")}/api/subscribe/confirm/${token}` +
+  const confirmUrl = `${publicOrigin(req)}/api/subscribe/confirm/${token}` +
     `?h=${encodeURIComponent(req.house.publicSlug)}`;
   try {
     await sendConfirmationEmail(email, language, name, confirmUrl, req.house.publicSlug);
-    res.status(202).json({ pending: true });
+    res.status(202).json({ pending: true, session: wasOpen ? auth.createSession(req.house.db, name, email) : undefined });
   } catch (err) {
     const status = err.code === "NO_SMTP" ? 503 : 502;
     res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
   }
-});
+}));
 
 app.get("/api/subscribe/confirm/:token", (req, res) => {
   const row = req.house.db.prepare("SELECT email, name FROM accounts WHERE confirm_token = ?").get(req.params.token);
@@ -641,11 +839,14 @@ app.get("/api/subscribe/status/:name", (req, res) => {
 });
 
 app.delete("/api/subscribe/by-name/:name", writeLimiter, (req, res) => {
+  if (!requireSignedIn(req, res, req.params.name)) return;
   req.house.db.prepare("DELETE FROM accounts WHERE name = ?").run(req.params.name);
   res.json({ ok: true });
 });
 
 app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
+  const owner = req.house.db.prepare("SELECT name FROM accounts WHERE email = ?").get(req.params.email.toLowerCase());
+  if (owner && !requireSignedIn(req, res, owner.name)) return;
   req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(req.params.email.toLowerCase());
   res.json({ ok: true });
 });
@@ -654,9 +855,15 @@ app.delete("/api/subscribe/:email", writeLimiter, (req, res) => {
 // header below — mail clients' own "Unsubscribe" button POSTs here directly,
 // no page load or confirmation click required. Same effect as the DELETE
 // route above, just reachable the way a mail client actually calls it.
+// The link carries the address plus a signature only this server can make
+// (see unsubscribeHeaders in mailer.js) — a bare address is not enough, or
+// anyone could switch off someone's reminders and the protection they give.
 app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
-  const row = req.house.db.prepare("SELECT email FROM accounts WHERE confirm_token = ? OR email = ?")
-    .get(req.params.token, req.params.token.toLowerCase());
+  const value = req.params.token;
+  let row = req.house.db.prepare("SELECT email FROM accounts WHERE confirm_token = ?").get(value);
+  if (!row && secret.verify(`unsub|${req.house.publicSlug}|${value.toLowerCase()}`, req.query.s)) {
+    row = req.house.db.prepare("SELECT email FROM accounts WHERE email = ?").get(value.toLowerCase());
+  }
   if (row) req.house.db.prepare("DELETE FROM accounts WHERE email = ?").run(row.email);
   res.status(200).send("OK");
 });
@@ -665,6 +872,59 @@ app.post("/api/subscribe/unsubscribe/:token", writeLimiter, (req, res) => {
 // as a real OS notification instead. No confirm-by-email step needed here —
 // the browser's own permission prompt is the opt-in, and a subscription is
 // useless to anyone but the device that created it.
+// ---- signing in as a housemate with an emailed code (see server/auth.js) ----
+
+// Which names are protected, and (if this device sent a session token) who it
+// is signed in as. A token the server no longer knows comes back as null so
+// the page can drop it.
+app.get("/api/auth/state", (req, res) => {
+  res.json({ session: req.authName, locked: auth.lockedNames(req.house.db) });
+});
+
+function authName(req) {
+  const name = typeof (req.body || {}).name === "string" ? req.body.name.trim() : "";
+  return currentRoster(req.house.db).includes(name) ? name : "";
+}
+
+app.post("/api/auth/request", mailLimiter, wrapAsync(async (req, res) => {
+  const name = authName(req);
+  if (!name) return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
+  const account = auth.accountFor(req.house.db, name);
+  if (!account) return res.status(400).json({ error: "That name has no confirmed email, so it doesn't need a code.", code: "NOT_LOCKED" });
+
+  const issued = auth.issueCode(req.house.db, name);
+  if (issued.error) {
+    return res.status(429).json({
+      error: issued.error === "locked" ? "Too many wrong codes — try again later." : "A code was just sent — wait a minute before asking again.",
+      code: issued.error === "locked" ? "AUTH_LOCKED" : "AUTH_COOLDOWN",
+      wait: issued.wait
+    });
+  }
+  try {
+    await sendLoginCodeEmail(account.email, account.language, name, issued.code);
+    res.json({ sent: true, email: maskEmail(account.email) });
+  } catch (err) {
+    auth.dropCode(req.house.db, name);
+    const status = err.code === "NO_SMTP" ? 503 : 502;
+    res.status(status).json({ error: err.message, code: err.code || "UNKNOWN" });
+  }
+}));
+
+app.post("/api/auth/verify", writeLimiter, codeGuessLimiter, (req, res) => {
+  const name = authName(req);
+  if (!name) return res.status(400).json({ error: "Pick a name that's on the housemate roster." });
+  const code = typeof req.body.code === "string" ? req.body.code.replace(/\s+/g, "") : "";
+  const result = auth.verifyCode(req.house.db, name, code);
+  if (result.token) return res.json({ token: result.token, name });
+  const status = result.error === "locked" ? 429 : 400;
+  res.status(status).json({ error: "Code not accepted.", code: "AUTH_" + result.error.toUpperCase(), left: result.left, wait: result.wait });
+});
+
+app.post("/api/auth/logout", writeLimiter, (req, res) => {
+  auth.revoke(req.house.db, req.get("x-auth-token"));
+  res.json({ ok: true });
+});
+
 app.get("/api/push/vapid-public-key", (req, res) => {
   const key = push.publicKey();
   if (!key) return res.status(503).json({ error: "Push isn't configured on the server." });
@@ -675,6 +935,14 @@ app.post("/api/push/subscribe", writeLimiter, (req, res) => {
   const sub = req.body && req.body.subscription;
   if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
     return res.status(400).json({ error: "Malformed subscription." });
+  }
+  // The server will POST to this address later, so it has to be a real push
+  // service — never an arbitrary URL (an internal address, someone's site).
+  if (!push.isPushServiceUrl(sub.endpoint) || String(sub.keys.p256dh).length > 200 || String(sub.keys.auth).length > 100) {
+    return res.status(400).json({ error: "That isn't a browser push address." });
+  }
+  if (!push.hasRoomFor(req.house.db, sub.endpoint)) {
+    return res.status(429).json({ error: "This house has too many devices with notifications on." });
   }
   push.saveSubscription(req.house.db, sub);
   res.status(201).json({ ok: true });
@@ -767,7 +1035,7 @@ app.get("/api/chat/photo/:id", (req, res) => {
   if (!photo) return res.status(404).end();
   res.set("Cache-Control", "private, max-age=86400");
   res.type(photo.mime);
-  fs.createReadStream(photo.file).pipe(res);
+  sendFile(res, photo.file);
 });
 
 // Chat notifications are a second opt-in on top of push itself: this device
@@ -815,7 +1083,7 @@ app.get("/", (req, res) => {
 
   const title = house ? `${house.name} · Bin Duty` : "Bin Duty";
   const description = t(lang, "tagline");
-  const origin = `${req.protocol}://${req.get("host")}`;
+  const origin = publicOrigin(req);
   const url = `${origin}${req.originalUrl}`;
   const image = `${origin}/icon-512.png`;
 
@@ -843,8 +1111,21 @@ app.get("/version", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
+// Last in line: any error (a malformed request body, a thrown handler) gets a
+// plain message — never Express's default page with a stack trace and paths.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(`${req.method} ${req.path} failed: ${err.message}`);
+  res.status(status).json({ error: status >= 500 ? "Something went wrong on the server." : "That request couldn't be read." });
+});
+
+// Only nginx talks to this process, so it listens on this machine alone —
+// reachable from outside it would bypass HTTPS and, by faking the forwarded
+// address, every rate limit. A container sets HOST=0.0.0.0.
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const HOST = process.env.HOST || "127.0.0.1";
+app.listen(PORT, HOST, () => {
   console.log(`Bin Duty server listening on http://localhost:${PORT} (TZ=${process.env.TZ})`);
   if (!process.env.GEMINI_API_KEY) {
     console.warn("GEMINI_API_KEY is not set — the camera check will return a 503 until it is.");
@@ -868,6 +1149,19 @@ if (!cron.validate(NOTIFY_CRON)) {
 }
 cron.schedule(cron.validate(NOTIFY_CRON) ? NOTIFY_CRON : DEFAULT_NOTIFY_CRON, async () => {
   try {
+    // The calendar is a fixed list of dates; shout in the log well before it runs out.
+    const lastDate = Object.keys(DEFAULT_FLAT_SCHEDULE).sort().pop();
+    if (lastDate) {
+      const [ly, lm, ld] = lastDate.split("-").map(Number);
+      const left = Math.round((new Date(ly, lm - 1, ld) - new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 86400000);
+      if (left <= 30) console.warn(`WARNING: the collection calendar ${left < 0 ? "ran out" : "ends"} on ${lastDate} (${left} days) — add the new dates in server/rotation.js, or there will be no tasks or reminders.`);
+    }
+    // Skipped because the bins were empty: no reminder about it, by mail or push.
+    const now = new Date();
+    if (isSkipped(defaultDb, dateKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)))) {
+      console.log("Reminder check: tomorrow's collection was skipped (bins empty), no mail or push sent.");
+      return;
+    }
     const result = await sendDailyReminders(defaultDb, currentRoster(defaultDb), originalHouse.slug);
     if (!result.dueTomorrow) {
       console.log("Reminder check: nothing due tomorrow, no mail sent.");

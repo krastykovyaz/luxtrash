@@ -34,6 +34,23 @@ function publicKey() {
   return process.env.VAPID_PUBLIC_KEY || null;
 }
 
+// Browser push services — the only places a subscription may point, since
+// the server POSTs to that address later.
+const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /(^|\.)push\.apple\.com$/,
+  /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/];
+function isPushServiceUrl(endpoint) {
+  if (typeof endpoint !== "string" || endpoint.length > 1000) return false;
+  let url;
+  try { url = new URL(endpoint); } catch (e) { return false; }
+  return url.protocol === "https:" && !url.port && PUSH_HOSTS.some((re) => re.test(url.hostname));
+}
+
+const MAX_SUBSCRIPTIONS_PER_HOUSE = 100;
+function hasRoomFor(db, endpoint) {
+  if (db.prepare("SELECT 1 FROM push_subscriptions WHERE endpoint = ?").get(endpoint)) return true;
+  return db.prepare("SELECT COUNT(*) AS n FROM push_subscriptions").get().n < MAX_SUBSCRIPTIONS_PER_HOUSE;
+}
+
 function saveSubscription(db, sub) {
   db.prepare(
     "INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?) " +
@@ -84,10 +101,13 @@ async function sendDailyReminderPush(db, roster, lang, url) {
   if (!codes || codes === "HOLIDAY" || !roster.length) return { sent: 0, pruned: 0, errors: [] };
   const label = codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
   const person = personForWeek(tomorrow, roster);
+  // One "duty" notification at a time: a later duty message (the follow-up, or
+  // the "skipped" update) replaces the earlier one instead of stacking.
   return sendToAll(db, {
     title: `${t(lang, "tonightLabel")} ${label}`,
     body: `${t(lang, "dutyMsgHeading")} ${person}`,
-    url: url || "/"
+    url: url || "/",
+    tag: "duty"
   });
 }
 
@@ -96,8 +116,41 @@ async function sendOutFollowUpPush(db, task, lang, url) {
   return sendToAll(db, {
     title: `${t(lang, "outReminderHeading")} — ${label}`,
     body: t(lang, "outReminderPushBody").replace("{label}", label),
-    url: url || "/"
+    url: url || "/",
+    tag: "duty"
   });
+}
+
+// What goes out when a collection is skipped because the bins were empty. It
+// carries the same tag as the duty reminders, so on a phone it REPLACES the
+// reminder that is still sitting there ("take the bins out") with "skipped",
+// without buzzing again.
+function skippedPayload(task, lang, url) {
+  const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  return {
+    title: `${t(lang, "skipPushTitle")} — ${label}`,
+    body: t(lang, "skipPushBody"),
+    url: url || "/",
+    tag: "duty",
+    renotify: false
+  };
+}
+// The skip was taken back: the duty is on again, and this replaces the "skipped" message.
+function unskippedPayload(task, lang, url) {
+  const label = task.codes.split("").map((c) => binLabel(lang, c)).filter(Boolean).join(" + ");
+  return {
+    title: `${t(lang, "unskipPushTitle")} — ${label}`,
+    body: t(lang, "unskipPushBody"),
+    url: url || "/",
+    tag: "duty",
+    renotify: true
+  };
+}
+async function sendUnskippedPush(db, task, lang, url) {
+  return sendToAll(db, unskippedPayload(task, lang, url));
+}
+async function sendSkippedPush(db, task, lang, url) {
+  return sendToAll(db, skippedPayload(task, lang, url));
 }
 
 async function sendWeekAheadPush(db, roster, lang, url) {
@@ -108,7 +161,8 @@ async function sendWeekAheadPush(db, roster, lang, url) {
   return sendToAll(db, {
     title: t(lang, "weekAheadSubject"),
     body: t(lang, "weekAheadBody").replace("{name}", person),
-    url: url || "/"
+    url: url || "/",
+    tag: "week"
   });
 }
 
@@ -164,6 +218,7 @@ async function notifyChat(db, { authorKey, parentAuthorKey, lang, url, now }) {
 
 module.exports = {
   setChatPush, chatPushEnabled, notifyChat,
+  isPushServiceUrl, hasRoomFor,
   configure, publicKey, saveSubscription, removeSubscription, sendToAll,
-  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush
+  sendDailyReminderPush, sendOutFollowUpPush, sendWeekAheadPush, sendSkippedPush, skippedPayload, sendUnskippedPush, unskippedPayload
 };

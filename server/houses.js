@@ -7,7 +7,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const Database = require("better-sqlite3");
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.BIN_DUTY_DATA_DIR || path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, "houses.sqlite"));
@@ -63,7 +63,9 @@ function slugifyBase(name) {
 }
 
 function randomSuffix() {
-  return crypto.randomBytes(3).toString("hex"); // 6 hex chars, e.g. "7f2a4c"
+  // 8 hex chars (~4 billion) for new houses — the code IS the key to a house.
+  // Older 6-char codes keep working; guessing is also rate-limited in index.js.
+  return crypto.randomBytes(4).toString("hex");
 }
 
 function getHouse(slug) {

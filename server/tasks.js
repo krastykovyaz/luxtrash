@@ -87,7 +87,7 @@ function getCurrentTask(db, today, flatSchedule) {
     if (dateKey < dateKeyOf(today)) continue; // never started and already past — let it go
     const codes = codesForFlat(date, flatSchedule);
     const row = getTaskRow(db, dateKey) || { date_key: dateKey, codes, out_by: null, out_at: null, back_by: null, back_at: null, coins: COINS_PER_TASK, out_reminder_count: 0 };
-    if (!row.back_at) {
+    if (!row.back_at && !row.skipped_at) {
       return { ...row, overdue: false, started: false };
     }
   }
@@ -102,7 +102,9 @@ function incrementOutReminderCount(db, dateKey, codes) {
   db.prepare("UPDATE tasks SET out_reminder_count = out_reminder_count + 1 WHERE date_key = ?").run(dateKey);
 }
 
-function confirmOut(db, dateKey, roster, name, flatSchedule) {
+// The checks shared by confirming a collection out and skipping it: a real
+// collection date, whose window has opened, that hasn't passed yet.
+function openCollection(dateKey, flatSchedule) {
   if (!isValidDateKey(dateKey)) {
     const err = new Error("That's not a real collection date.");
     err.status = 400;
@@ -126,6 +128,30 @@ function confirmOut(db, dateKey, roster, name, flatSchedule) {
     err.status = 400;
     throw err;
   }
+  // A collection that has already passed without anyone confirming it is
+  // over (the app stops showing it too) — confirming it now would only push
+  // tonight's real task off the screen.
+  if (dateKey < dateKeyOf(today)) {
+    const err = new Error("That collection has already passed.");
+    err.status = 400;
+    throw err;
+  }
+  return codes;
+}
+
+function confirmOut(db, dateKey, roster, name, flatSchedule) {
+  const codes = openCollection(dateKey, flatSchedule);
+  const existing = getTaskRow(db, dateKey);
+  if (existing && existing.out_at) {
+    const err = new Error("Someone already confirmed that one out.");
+    err.status = 409;
+    throw err;
+  }
+  if (existing && existing.skipped_at) {
+    const err = new Error("That collection was skipped — the bins were empty.");
+    err.status = 409;
+    throw err;
+  }
   if (!roster.includes(name)) {
     const err = new Error("Unknown roster name.");
     err.status = 400;
@@ -134,6 +160,31 @@ function confirmOut(db, dateKey, roster, name, flatSchedule) {
   ensureTaskRow(db, dateKey, codes);
   db.prepare("UPDATE tasks SET out_by = ?, out_at = ? WHERE date_key = ?")
     .run(name, new Date().toISOString(), dateKey);
+  return getTaskRow(db, dateKey);
+}
+
+// The bins were empty, so there was nothing to put out: the collection is
+// closed with no coins for anyone. Only before anyone confirmed it out.
+function skipTask(db, dateKey, roster, name, flatSchedule) {
+  const codes = openCollection(dateKey, flatSchedule);
+  if (!roster.includes(name)) {
+    const err = new Error("Unknown roster name.");
+    err.status = 400;
+    throw err;
+  }
+  const existing = getTaskRow(db, dateKey);
+  if (existing && existing.out_at) {
+    const err = new Error("The bins are already out — confirm they're back instead.");
+    err.status = 409;
+    throw err;
+  }
+  if (existing && existing.skipped_at) {
+    const err = new Error("That collection was already skipped.");
+    err.status = 409;
+    throw err;
+  }
+  ensureTaskRow(db, dateKey, codes);
+  db.prepare("UPDATE tasks SET skipped_by = ?, skipped_at = ? WHERE date_key = ?").run(name, new Date().toISOString(), dateKey);
   return getTaskRow(db, dateKey);
 }
 
@@ -149,6 +200,12 @@ function confirmBack(db, dateKey, roster, name) {
     err.status = 400;
     throw err;
   }
+  // Closing a task pays out, so it can only happen once.
+  if (row.back_at) {
+    const err = new Error("Someone already confirmed that one back.");
+    err.status = 409;
+    throw err;
+  }
   if (!roster.includes(name)) {
     const err = new Error("Unknown roster name.");
     err.status = 400;
@@ -159,10 +216,29 @@ function confirmBack(db, dateKey, roster, name) {
   return getTaskRow(db, dateKey);
 }
 
+// Takes a skip back: the collection is open again. Only until its date passes,
+// and only while nobody has started it (a skipped task can't have been taken out).
+function unskipTask(db, dateKey, flatSchedule) {
+  openCollection(dateKey, flatSchedule);
+  const existing = getTaskRow(db, dateKey);
+  if (!existing || !existing.skipped_at) {
+    const err = new Error("That collection wasn't skipped.");
+    err.status = 409;
+    throw err;
+  }
+  db.prepare("UPDATE tasks SET skipped_by = NULL, skipped_at = NULL WHERE date_key = ?").run(dateKey);
+  return getTaskRow(db, dateKey);
+}
+
+function isSkipped(db, dateKey) {
+  const row = getTaskRow(db, dateKey);
+  return !!(row && row.skipped_at);
+}
+
 function getLeaderboard(db) {
   return db.prepare(
     "SELECT out_by AS name, SUM(coins) AS coins FROM tasks WHERE back_at IS NOT NULL GROUP BY out_by"
   ).all();
 }
 
-module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, getLeaderboard, dateKeyOf };
+module.exports = { getCurrentTask, incrementOutReminderCount, confirmOut, confirmBack, skipTask, unskipTask, isSkipped, getLeaderboard, dateKeyOf };

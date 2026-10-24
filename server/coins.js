@@ -19,6 +19,14 @@ function getBalance(db, name) {
   return row.coins;
 }
 
+// How many awards of one kind a person got since local midnight — for the
+// daily caps on scan and Sort It coins.
+function countToday(db, name, reason) {
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  return db.prepare("SELECT COUNT(*) AS n FROM coin_ledger WHERE name = ? AND reason = ? AND created_at >= ?").get(name, reason, midnight).n;
+}
+
 function getLeaderboard(db) {
   return db.prepare(
     "SELECT name, SUM(delta) AS coins FROM coin_ledger GROUP BY name ORDER BY coins DESC"
@@ -129,6 +137,7 @@ module.exports = {
   ACHIEVEMENTS,
   award,
   getBalance,
+  countToday,
   getLeaderboard,
   getHistory,
   getAchievements,

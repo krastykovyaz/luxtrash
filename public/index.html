@@ -44,14 +44,17 @@
     --shadow: 0 2px 0 rgba(0,0,0,0.35), 0 12px 26px -14px rgba(0,0,0,0.7);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
+  /* App shell: the page never scrolls itself. #scroller scrolls and the tab bar
+     is an ordinary flex item under it, so the bar cannot detach from the
+     bottom the way a position:fixed one does in an iPhone Home Screen app. */
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; }
+  .scroller { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; padding-inline: 16px; padding-block: 26px 28px; }
   body {
     background-color: var(--bg);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     color: var(--ink);
     font-family: 'Work Sans', system-ui, sans-serif;
-    padding-inline: 16px;
-    padding-block: 20px 48px;
   }
   h1, h2, h3 { margin: 0; text-wrap: balance; }
   .mono { font-family: 'Work Sans', sans-serif; font-variant-numeric: tabular-nums; }
@@ -321,6 +324,14 @@
   .cal-cell .dots { display: flex; gap: 2px; min-height: 8px; }
   .cal-cell .dots .dot { width: 7px; height: 7px; }
   .cal-cell .hday { font-size: 8px; color: var(--wrong); font-weight: 700; }
+  .skip-btn { align-self: flex-start; background: none; border: none; padding: 2px 0; color: var(--ink-faint); font-family: 'Work Sans', sans-serif; font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .schedule-note { padding: 10px 13px; border-radius: 10px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--ink); font-size: 13px; line-height: 1.45; }
+  .skip-btn:hover { color: var(--ink-soft); }
+  .skip-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 9px 12px; border-radius: 10px; background: rgba(0,0,0,0.22); border: 1px dashed var(--line); font-size: 13px; line-height: 1.4; color: var(--ink-soft); }
+  .skip-notice .skip-btn { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .skip-btn.confirming { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .skip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cal-who.skipped { color: var(--ink-faint); background: none; }
   .cal-who { font-size: 8px; font-weight: 700; color: var(--ink-soft); background: var(--surface); border-radius: 4px; padding: 1px 4px; line-height: 1.3; }
   .cal-cam { font-size: 9px; line-height: 1; }
   .cal-cell.has-photos { cursor: pointer; }
@@ -345,24 +356,31 @@
   footer { text-align: center; font-size: 12px; color: var(--ink-faint); padding-top: 8px; }
 
   /* ---- tabbed views (phone width) vs. full dashboard (wide screens) ---- */
-  body { padding-bottom: 84px; } /* room for the fixed tabbar */
   .tabbar {
-    position: fixed; left: 16px; right: 16px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 20;
+    flex: none; position: relative; z-index: 20;
     display: flex; justify-content: space-between;
+    width: calc(100% - 32px); max-width: 760px; align-self: center;
+    margin: 4px 16px max(8px, calc(env(safe-area-inset-bottom) - 20px));
     background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
     padding: 10px 18px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-    max-width: 760px; margin-inline: auto;
-    /* Forces its own GPU-composited layer — without this, iOS Safari can
-       visibly detach a `position: fixed` element and let it scroll along
-       with the page during a fast/momentum scroll, snapping back only once
-       scrolling stops. */
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
-    will-change: transform;
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
   }
+  /* Pull down from the top to refresh (app.js moves it with the finger). */
+  .ptr { position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px)); z-index: 25; width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--line);
+    color: var(--ink-faint); box-shadow: 0 6px 16px rgba(0,0,0,0.4); opacity: 0; transform: translate(-50%, -50px); pointer-events: none; }
+  .ptr.armed { color: var(--accent); }
+  .ptr.spinning svg { animation: ptr-spin 0.8s linear infinite; color: var(--accent); }
+  @keyframes ptr-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .ptr.spinning svg { animation: none; } }
+  body.in-chat .tabbar { display: none; }
+  /* Keyboard open (set from visualViewport in app.js): the app shrinks to the space above the
+     keyboard instead of letting iOS slide the whole page up and hide the conversation. */
+  body.kbd { position: fixed; left: 0; right: 0; top: var(--app-top, 0px); height: var(--app-h, 100%); }
+  body.kbd .tabbar { display: none; }
+  body.kbd .scroller { padding-top: 10px; padding-bottom: 6px; }
+  body.kbd.in-chat .masthead, body.kbd.in-chat .chat-note { display: none; }
+  body.in-chat .scroller { padding-bottom: max(4px, calc(env(safe-area-inset-bottom) - 24px)); }
   .tab-btn {
     flex: 1; background: none; border: none; color: var(--ink-faint);
     font-family: 'Work Sans', sans-serif; font-size: 10px; font-weight: 500;
@@ -381,7 +399,6 @@
   .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   @media (min-width: 900px) {
-    body { padding-bottom: 48px; }
     .tabbar { display: none; }
     [data-view][hidden] { display: flex !important; }
     .wrap { max-width: 1100px; }
@@ -416,14 +433,12 @@
 
   /* ---- home dashboard (matches the mobile mockup) ---- */
   .hazard-top { position: fixed; top: 0; left: 0; right: 0; height: 10px; border-radius: 0; z-index: 30; box-shadow: none; }
-  body { padding-top: 26px; }
   .masthead .today { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.04em; text-transform: uppercase; }
   .eyebrow { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
   .hero-card { padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
   .hero-duty { gap: 12px; padding-top: 14px; border-top: 1px dashed var(--line); }
   .hero-card.no-task .task-info { display: none; }
   .hero-card.no-task .hero-duty { padding-top: 0; border-top: none; }
-  body { padding-bottom: 116px; }
   .hero-avatar { width: 34px; height: 34px; background: var(--accent) !important; color: var(--accent-ink); border: none; font-family: 'Bebas Neue', sans-serif; font-size: 16px; }
   .hero-status { font-size: 15px; color: var(--ink); }
   .hero-status strong { color: var(--accent); }
@@ -507,8 +522,15 @@
   .chat-id b { font-weight: 700; }
   /* The screen fills the space between the header and the tab bar, so the
      composer rests just above the tab bar even when the thread is short. */
-  #chatSubview:not([hidden]) { display: flex; flex-direction: column; gap: 10px; min-height: calc(100vh - 184px); min-height: calc(100dvh - 184px); }
+  #chatSubview:not([hidden]) { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; }
+  /* The chat fills the screen under the header, so the message box rests on the bottom edge. */
+  body.in-chat .wrap { min-height: 100%; }
+  body.in-chat .chat-composer { padding-bottom: 4px; }
   .chat-thread { flex: 1 1 auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 160px; }
+  /* Few messages sit at the bottom, next to the message box; many fill the thread and scroll. */
+  .chat-thread > :first-child:not(.chat-empty) { margin-top: auto; }
+  .chat-new { display: flex; align-items: center; gap: 10px; align-self: stretch; margin: 10px 0 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); }
+  .chat-new::before, .chat-new::after { content: ""; flex: 1; height: 1px; background: var(--accent); opacity: 0.45; }
   .chat-empty { margin: auto; text-align: center; font-size: 13px; line-height: 1.5; color: var(--ink-faint); max-width: 30ch; padding: 24px 0; }
   .chat-day { align-self: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 8px 0 2px; }
   .chat-msg { max-width: 86%; align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 8px 11px 7px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -526,6 +548,26 @@
   .chat-pic-gone { font-size: 12px; font-style: italic; color: var(--ink-faint); background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px 10px; }
   .chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
   .chat-reacts { display: flex; gap: 4px; margin-inline-start: auto; }
+  .chat-reacts:empty { display: none; }
+  /* Press-and-hold menu: the message lifted over a dimmed screen, reactions
+     above it and its actions below (like Telegram). */
+  .chat-react-layer { position: fixed; inset: 0; z-index: 70; }
+  .chat-react-backdrop { position: absolute; inset: 0; background: rgba(10, 8, 4, 0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: chatFade 0.15s ease; }
+  .chat-react-clone { position: fixed; margin: 0; max-width: none; overflow: hidden; pointer-events: none; box-shadow: 0 12px 32px rgba(0,0,0,0.55); animation: chatPop 0.16s ease; }
+  .chat-react-bar { position: fixed; display: flex; gap: 2px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 10px 28px rgba(0,0,0,0.5); animation: chatPop 0.16s ease; }
+  .chat-react-bar button { width: 46px; height: 46px; border-radius: 50%; border: none; background: none; font-size: 26px; line-height: 1; cursor: pointer; transition: transform 0.12s ease, background 0.12s ease; }
+  .chat-react-bar button:hover, .chat-react-bar button:focus-visible { transform: scale(1.18); outline: none; background: var(--surface-2); }
+  .chat-react-bar button.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .chat-react-menu { position: fixed; min-width: 190px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 28px rgba(0,0,0,0.5); animation: chatPop 0.16s ease; }
+  .chat-react-menu button { display: flex; justify-content: space-between; gap: 18px; text-align: start; padding: 12px 15px; background: none; border: none; border-top: 1px solid var(--line); font-family: 'Work Sans', sans-serif; font-size: 15px; font-weight: 500; color: var(--ink); cursor: pointer; }
+  .chat-react-menu button:first-child { border-top: none; }
+  .chat-react-menu button:hover, .chat-react-menu button:focus-visible { background: var(--surface-2); outline: none; }
+  .chat-react-menu button.danger { color: var(--wrong); }
+  @keyframes chatPop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+  @keyframes chatFade { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chat-react-backdrop, .chat-react-clone, .chat-react-bar, .chat-react-menu { animation: none; } }
+  /* On touch screens a held message opens the menu, not text selection. */
+  @media (hover: none) { .chat-msg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } }
   .chat-react { background: rgba(0,0,0,0.2); border: 1px solid transparent; border-radius: 999px; padding: 1px 7px; font-family: inherit; font-size: 12px; line-height: 1.55; color: var(--ink-soft); cursor: pointer; opacity: 0.65; font-variant-numeric: tabular-nums; }
   .chat-react:hover { opacity: 1; }
   .chat-react.has { opacity: 1; border-color: var(--line); }
@@ -534,8 +576,9 @@
   .chat-act { background: none; border: none; padding: 2px 0; font-family: inherit; font-size: 11px; font-weight: 600; color: var(--ink-faint); cursor: pointer; }
   .chat-act:hover { color: var(--accent); }
   .chat-act.danger:hover { color: var(--wrong); }
+  [dir="rtl"] .chat-send svg { transform: scaleX(-1); } /* the send arrow points the way the text reads */
   .chat-note { font-size: 11px; color: var(--ink-faint); text-align: center; padding: 0 8px; }
-  .chat-composer { position: sticky; bottom: 80px; z-index: 5; display: flex; flex-direction: column; gap: 6px; background: var(--bg); padding: 8px 0 16px; box-shadow: 0 -10px 12px -6px var(--bg); }
+  .chat-composer { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: 6px; background: var(--bg); padding: 8px 0 16px; box-shadow: 0 -10px 12px -6px var(--bg); }
   .chat-compose-row { display: flex; align-items: flex-end; gap: 8px; }
   .chat-compose-row textarea { flex: 1; min-width: 0; resize: none; max-height: 120px; font-family: 'Work Sans', sans-serif; font-size: 16px; /* iOS Safari zooms the page into any field under 16px when tapped */ line-height: 1.35; color: var(--ink); background: var(--surface-2); border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; }
   .chat-compose-row textarea:focus { outline: none; border-color: var(--accent); }
@@ -554,7 +597,7 @@
   .chat-lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.88); display: flex; align-items: center; justify-content: center; padding: 16px; cursor: zoom-out; }
   .chat-lightbox[hidden] { display: none; }
   .chat-lightbox img { max-width: 100%; max-height: 100%; border-radius: 10px; }
-  @media (min-width: 900px) { .chat-composer { bottom: 0; padding-bottom: 8px; } .chat-msg { max-width: 70%; } }
+  @media (min-width: 900px) { .chat-composer { padding-bottom: 8px; } .chat-msg { max-width: 70%; } }
   @media (prefers-reduced-motion: reduce) { .chat-msg.flash { animation: none; } }
 
   /* iPhone Safari zooms the whole page into any text field under 16px when it
@@ -648,7 +691,10 @@
   .profile-avatar { background: var(--accent) !important; color: var(--accent-ink); border: none; }
   .profile-stats { margin-bottom: 0; }
   .me-picker { display: flex; flex-direction: column; gap: 8px; }
-  .me-picker .claim-select { align-self: flex-start; }
+  .me-picker .claim-select { align-self: stretch; width: 100%; }
+  .me-auth { display: flex; flex-direction: column; gap: 10px; }
+  .me-auth input.claim-select { flex: 1; min-width: 0; letter-spacing: 0.25em; font-variant-numeric: tabular-nums; }
+  .me-picker .sub-unsub { align-self: flex-start; }
   .lang-select { width: 100%; padding: 12px 14px; font-size: 14px; font-weight: 500; border-radius: 10px; margin-top: 8px; background: var(--surface); }
   .notify-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
   .push-row { display: flex; align-items: center; gap: 14px; }
@@ -778,6 +824,13 @@
 </head>
 <body>
 <div class="hazard-bar hazard-top"></div>
+<div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></div>
+<div class="chat-react-layer" id="chatReactLayer" hidden>
+  <div class="chat-react-backdrop" id="chatReactBackdrop"></div>
+  <div class="chat-react-bar" id="chatReactBar" role="toolbar"></div>
+  <div class="chat-react-menu" id="chatReactMenu" role="menu"></div>
+</div>
+<div class="scroller" id="scroller">
 <div class="wrap" id="app">
 
   <div class="masthead">
@@ -786,8 +839,13 @@
   </div>
 
   <section data-view="home" id="homeDashboard">
+    <div class="schedule-note" id="scheduleNoteHome" hidden></div>
     <div class="poster hero-card" id="homeHero">
-      <div class="task-info" id="taskInfo">
+      <div class="skip-notice" id="skipNotice" hidden>
+      <span id="skipNoticeText"></span>
+      <button class="skip-btn" id="unskipBtn" type="button" data-i18n="unskipBtn"></button>
+    </div>
+    <div class="task-info" id="taskInfo">
         <div class="eyebrow" id="taskDateLabel"></div>
         <div class="badge-row" id="taskBadges"></div>
       </div>
@@ -810,6 +868,7 @@
         <select class="claim-select" id="outNameSelect"></select>
         <button class="stamp-btn hero-btn" id="outBtn" type="button" data-i18n="confirmOutBtn"></button>
       </div>
+      <button class="skip-btn" id="skipBtn" type="button" hidden></button>
       <div class="photo-attach" id="backPhotoAttach">
         <div class="photo-attach-row">
           <label class="photo-attach-btn" id="backPhotoLabel" for="backPhotoInput">
@@ -911,7 +970,7 @@
     <button class="subview-head" id="chatBackBtn" type="button"><span class="chev">&#8249;</span><span data-i18n="chatEntryLabel"></span></button>
     <div class="chat-id"><span data-i18n="chatPostingAs"></span> <b id="chatMeName">…</b></div>
     <div class="poster chat-thread" id="chatThread" aria-live="polite"></div>
-    <div class="chat-note" data-i18n="chatNote"></div>
+    <div class="chat-note"><span data-i18n="chatNote"></span> <span data-i18n="chatHoldHint"></span></div>
     <div class="chat-composer" id="chatComposer">
       <div class="chat-chip" id="chatReplyBar" hidden>
         <span class="chat-chip-text" id="chatReplyText"></span>
@@ -1037,6 +1096,18 @@
         <div class="eyebrow" data-i18n="youHeading"></div>
         <select class="claim-select" id="meSelect"></select>
         <div class="claim-status" id="meStatus"></div>
+        <div class="me-auth" id="meAuth" hidden>
+          <div class="claim-status" id="meAuthMsg"></div>
+          <div class="claim-row">
+            <button class="stamp-btn" id="meAuthSend" type="button" data-i18n="authSend"></button>
+            <button class="sub-unsub" id="meAuthCancel" type="button" data-i18n="authCancel"></button>
+          </div>
+          <div class="claim-row" id="meAuthCodeRow" hidden>
+            <input type="text" id="meAuthCode" class="claim-select" inputmode="numeric" autocomplete="one-time-code" maxlength="6" data-i18n-placeholder="authCodePlaceholder">
+            <button class="stamp-btn" id="meAuthVerify" type="button" data-i18n="authVerify"></button>
+          </div>
+        </div>
+        <button class="sub-unsub" id="meSignOut" type="button" data-i18n="authSignOut" hidden></button>
       </div>
     </div>
     <div>
@@ -1133,6 +1204,7 @@
     </div>
   </section>
 
+  <div class="schedule-note" id="scheduleNoteRoster" data-view="roster" hidden></div>
   <footer data-i18n="footerText" data-view="roster"></footer>
 </div>
 
@@ -1185,6 +1257,7 @@
     <div class="photo-modal-title" id="photoModalTitle"></div>
     <div class="photo-modal-grid" id="photoModalGrid"></div>
   </div>
+</div>
 </div>
 
 <nav class="tabbar" id="tabbar">

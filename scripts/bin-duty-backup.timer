@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the Bin Duty backup nightly
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

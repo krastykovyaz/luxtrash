@@ -2,7 +2,8 @@ const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 
-const DATA_DIR = path.join(__dirname, "data");
+// BIN_DUTY_DATA_DIR lets the test suite run against a throwaway folder.
+const DATA_DIR = process.env.BIN_DUTY_DATA_DIR || path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const HOUSES_DIR = path.join(DATA_DIR, "houses");
@@ -58,6 +59,12 @@ function ensureSchema(db, opts) {
   // who never confirms doesn't get emailed forever.
   if (taskCols.indexOf("out_reminder_count") === -1) {
     db.exec("ALTER TABLE tasks ADD COLUMN out_reminder_count INTEGER NOT NULL DEFAULT 0");
+  }
+  // "Bins are empty — skip": a collection nobody needed to put out. Closes the
+  // task (no reminders, the app moves on) without paying anyone.
+  if (taskCols.indexOf("skipped_at") === -1) {
+    db.exec("ALTER TABLE tasks ADD COLUMN skipped_by TEXT");
+    db.exec("ALTER TABLE tasks ADD COLUMN skipped_at TEXT");
   }
 
   db.exec(`
@@ -218,6 +225,8 @@ function ensureSchema(db, opts) {
       codes TEXT NOT NULL
     )
   `);
+
+  require("./auth").ensureTables(db);
 }
 
 var cache = new Map();

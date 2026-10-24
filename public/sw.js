@@ -5,7 +5,7 @@
 
 // Changing this line makes installed copies fetch a new worker, which is what
 // tells pages that predate the /version check to refresh themselves.
-var SW_VERSION = "2026-10-01.3";
+var SW_VERSION = "2026-10-15.1";
 
 self.addEventListener("install", function (event) {
   self.skipWaiting();
@@ -27,7 +27,8 @@ self.addEventListener("push", function (event) {
   };
   // A tag makes a new notification replace the previous one with that tag
   // (several chat messages become one entry, not a stack) and still alert.
-  if (data.tag) { options.tag = data.tag; options.renotify = true; }
+  // (renotify: false lets a message quietly update the one it replaces.)
+  if (data.tag) { options.tag = data.tag; options.renotify = data.renotify !== false; }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

@@ -134,8 +134,9 @@
     MY_HOUSES = MY_HOUSES.filter(function (h) { return h.slug !== slug; });
     try {
       localStorage.setItem("binDutyMyHouses", JSON.stringify(MY_HOUSES));
-      localStorage.removeItem("binDutyMe:" + slug);
-      localStorage.removeItem("binDutyBestStreak:" + slug);
+      ["binDutyMe", "binDutyBestStreak", "binDutyAuth", "binDutyChatToken", "binDutyChatSeen"].forEach(function (k) {
+        localStorage.removeItem(k + ":" + slug);
+      });
     } catch (e) {}
     setOwnerToken(slug, null);
   }
@@ -177,6 +178,39 @@
       if (ME) localStorage.setItem(houseKey("binDutyMe"), ME);
       else localStorage.removeItem(houseKey("binDutyMe"));
     } catch (e) {}
+  }
+
+  // ---- signing in as a protected name. A name with a confirmed email needs a
+  // code emailed to that address; the session token it earns is kept per
+  // house and sent with every request, so the device stays signed in until
+  // the person signs out (and then needs a new code). ----
+  function getAuthToken() {
+    try { return localStorage.getItem(houseKey("binDutyAuth")) || ""; } catch (e) { return ""; }
+  }
+  function setAuthToken(token) {
+    try {
+      if (token) localStorage.setItem(houseKey("binDutyAuth"), token);
+      else localStorage.removeItem(houseKey("binDutyAuth"));
+    } catch (e) {}
+  }
+  // fetch() for the house's own API: same call, plus the session token if there is one.
+  function apiFetch(url, opts) {
+    var token = getAuthToken();
+    if (!token) return fetch(url, opts);
+    opts = Object.assign({}, opts);
+    var headers = new Headers(opts.headers || {});
+    headers.set("x-auth-token", token);
+    opts.headers = headers;
+    return fetch(url, opts);
+  }
+  var AUTH = { session: null, locked: [] };
+  function isLockedName(name) { return AUTH.locked.indexOf(name) !== -1; }
+  // Called once the server has said who this device is signed in as: a
+  // protected name can only stay picked while the session is for that name.
+  function enforceSession(state) {
+    AUTH = state && Array.isArray(state.locked) ? state : AUTH;
+    if (state && !state.session) setAuthToken("");
+    if (ME && isLockedName(ME) && AUTH.session !== ME) setMe("");
   }
 
   var ACHIEVEMENT_META = {
@@ -462,12 +496,22 @@
   var scanSubview = document.getElementById("scanSubview");
   var sortItSubview = document.getElementById("sortItSubview");
   var chatSubview = document.getElementById("chatSubview");
+  // The page scrolls inside this element, not the window (see the app-shell note in index.html).
+  var pageScroller = document.getElementById("scroller");
+  function scrollPageTop() { pageScroller.scrollTop = 0; }
+  // iOS pans the whole window up to reveal a focused field and can leave it
+  // panned after the keyboard closes; the window itself never needs to scroll.
+  document.addEventListener("focusout", function () {
+    setTimeout(function () { if (window.scrollY) window.scrollTo(0, 0); }, 60);
+  });
   function showHomeSubview(which) {
     homeDashboard.hidden = which !== "dashboard";
     scanSubview.hidden = which !== "scan";
     sortItSubview.hidden = which !== "sortit";
     chatSubview.hidden = which !== "chat";
-    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    // The chat takes the whole screen: no tab bar under it.
+    document.body.classList.toggle("in-chat", which === "chat");
+    scrollPageTop();
     if (which === "chat") chatOpened(); else chatClosed();
   }
   document.getElementById("scanLaunchBtn").addEventListener("click", function () { showHomeSubview("scan"); });
@@ -492,7 +536,8 @@
     // "Full calendar" on another tab) always lands on its dashboard, never
     // wherever a Scan/Sort It sub-view was left open.
     if (view === "home") showHomeSubview("dashboard");
-    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    else document.body.classList.remove("in-chat");
+    scrollPageTop();
   }
   document.querySelectorAll(".tab-btn").forEach(function (btn) {
     btn.addEventListener("click", function () { showView(btn.getAttribute("data-goto")); });
@@ -500,6 +545,32 @@
   showView(currentView);
 
   document.getElementById("fullCalendarJumpBtn").addEventListener("click", function () { showView("roster"); });
+
+  // The collection calendar is a fixed list of dates. When what's left of it is
+  // about a month or less (or it has run out), say so on Home and Roster — after
+  // its last date there are no tasks or reminders, which is easy to miss.
+  function renderScheduleNote() {
+    var last = "";
+    Object.keys(SCHEDULE || {}).forEach(function (mk) {
+      Object.keys(SCHEDULE[mk]).forEach(function (d) {
+        if (!SCHEDULE[mk][d] || SCHEDULE[mk][d] === "HOLIDAY") return;
+        var k = mk + "-" + String(d).padStart(2, "0");
+        if (k > last) last = k;
+      });
+    });
+    var text = "";
+    if (last) {
+      var end = new Date(last + "T00:00:00");
+      var now = new Date();
+      var daysLeft = Math.round((end - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+      if (daysLeft <= 30) text = fmt(daysLeft < 0 ? "scheduleEnded" : "scheduleEnds", { date: fmtLong(end) });
+    }
+    ["scheduleNoteHome", "scheduleNoteRoster"].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.textContent = text;
+      el.hidden = !text;
+    });
+  }
 
   function applyLang() {
     var meta = window.LANGS.find(function (l) { return l.code === currentLang; }) || window.LANGS[0];
@@ -549,6 +620,7 @@
     renderDonateSelect();
     loadAchievements();
     loadReactions();
+    renderScheduleNote();
   }
 
   function renderBadges(container, codes) {
@@ -850,7 +922,7 @@
   var addNameBtn = document.getElementById("addNameBtn");
 
   function loadRosterFull() {
-    return fetch(api("/api/roster/full"))
+    return apiFetch(api("/api/roster/full"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         ROSTER_OCCUPATION = {};
@@ -882,7 +954,7 @@
     var name = addNameInput.value.trim();
     if (!name) return;
     addNameBtn.disabled = true;
-    fetch(api("/api/roster"), {
+    apiFetch(api("/api/roster"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: name })
@@ -901,7 +973,8 @@
   }
 
   function removeFromRoster(name) {
-    fetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE" })
+    var ownerToken = HOUSE_SLUG ? getOwnerTokens()[HOUSE_SLUG] : null;
+    apiFetch(api("/api/roster/" + encodeURIComponent(name)), { method: "DELETE", headers: ownerToken ? { "x-owner-token": ownerToken } : {} })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -980,7 +1053,7 @@
       gFeedbackEl.textContent = gScoreVal === gQueue.length ? tr("perfectRound") : tr("solidRound");
       if (gScoreVal === gQueue.length && ME && !gRoundReported) {
         gRoundReported = true;
-        fetch(api("/api/quiz/complete"), {
+        apiFetch(api("/api/quiz/complete"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: ME, correct: gScoreVal, total: gQueue.length })
@@ -1105,7 +1178,7 @@
     // Returns the promise — callers that render the "next collection"
     // fallback (which reads TASK_HISTORY) sequence themselves after this,
     // so that check never runs against stale/empty history.
-    return fetch(api("/api/tasks/history"))
+    return apiFetch(api("/api/tasks/history"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         TASK_HISTORY = {};
@@ -1171,7 +1244,9 @@
             // glyph when a proof photo exists for it.
             var whoMarkup = hist && hist.out_by
               ? '<span class="cal-who">' + initials(hist.out_by) + '</span>' + (hasPhotos ? '<span class="cal-cam">\u{1F4F7}</span>' : "")
-              : "";
+              : hist && hist.skipped_at
+                ? '<span class="cal-who skipped" title="' + tr("skippedCalTitle") + '">\u2013</span>'
+                : "";
             cellDiv.innerHTML =
               '<span class="n mono">' + dayNum + '</span>' +
               (codes2 === "HOLIDAY" ? '<span class="hday"></span>' : '<span class="dots">' + dotsMarkup + '</span>') +
@@ -1254,6 +1329,10 @@
   var outNameSelect = document.getElementById("outNameSelect");
   var backNameSelect = document.getElementById("backNameSelect");
   var outBtn = document.getElementById("outBtn");
+  var skipBtn = document.getElementById("skipBtn");
+  var skipNotice = document.getElementById("skipNotice");
+  var skipNoticeText = document.getElementById("skipNoticeText");
+  var unskipBtn = document.getElementById("unskipBtn");
   var backBtn = document.getElementById("backBtn");
   var leaderboardEl = document.getElementById("leaderboard");
   var currentTask = null;
@@ -1484,6 +1563,37 @@
     fillNameSelect(backNameSelect, currentTask && currentTask.out_by);
   }
 
+  // "Alex skipped today's bins — they were empty. [Undo skip]" — shown for a
+  // skipped collection until its date has passed, so a skip made by mistake
+  // (or by someone who shouldn't have) is visible and can be taken back.
+  var skippedDateKey = null;
+  function renderSkipNotice() {
+    var todayKey = dateKeyOf(new Date());
+    var found = null;
+    Object.keys(TASK_HISTORY).sort().forEach(function (k) {
+      var r = TASK_HISTORY[k];
+      if (!found && r.skipped_at && k >= todayKey) found = r;
+    });
+    skippedDateKey = found ? found.date_key : null;
+    skipNotice.hidden = !found;
+    if (!found) return;
+    skipNoticeText.textContent = found.date_key === todayKey
+      ? fmt("skippedNotice", { name: found.skipped_by || "?" })
+      : fmt("skippedNoticeLater", { name: found.skipped_by || "?", date: fmtShort(new Date(found.date_key + "T00:00:00")) + " " + new Date(found.date_key + "T00:00:00").getDate() });
+  }
+  unskipBtn.addEventListener("click", function () {
+    if (!skippedDateKey) return;
+    unskipBtn.disabled = true;
+    apiFetch(api("/api/tasks/" + skippedDateKey + "/unskip"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () { return loadTaskHistory().then(loadTask); })
+      .catch(function (e) { claimStatus.textContent = e.message || tr("unskipFailed"); })
+      .finally(function () { unskipBtn.disabled = false; });
+  });
+
   function renderTask(task) {
     currentTask = task;
     // A picked-but-not-yet-submitted photo belongs to one specific task; if
@@ -1496,6 +1606,7 @@
       backPhoto.reset();
       lastRenderedTaskKey = taskKey;
     }
+    renderSkipNotice();
     var homeDutyAvatar = document.getElementById("homeDutyAvatar");
     var homeHero = document.getElementById("homeHero");
     var reactionsRowEl = document.getElementById("reactionsRow");
@@ -1515,12 +1626,13 @@
         // day even arrives. TASK_HISTORY is kept fresh for exactly this
         // check (see loadTaskHistory, sequenced before this ever renders).
         var candHist = TASK_HISTORY[dateKeyOf(cand)];
-        if (candHist && candHist.back_at) continue;
+        if (candHist && (candHist.back_at || candHist.skipped_at)) continue;
         next = cand; nextOffset = i; break;
       }
       backRow.hidden = true;
       backPhoto.setHidden(true);
       reactionsRowEl.hidden = true;
+      skipBtn.hidden = true;
       if (!next) {
         taskDateLabel.textContent = "";
         taskBadges.innerHTML = "";
@@ -1588,6 +1700,8 @@
       syncSelectTrigger(backNameSelect);
     }
 
+    resetSkipBtn();
+    skipBtn.hidden = !!task.out_at;
     if (!task.out_at) {
       outRow.hidden = false;
       outPhoto.setHidden(false);
@@ -1625,14 +1739,14 @@
   }
 
   function loadTask() {
-    return fetch(api("/api/tasks/current"))
+    return apiFetch(api("/api/tasks/current"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(renderTask)
       .catch(function () { claimStatus.textContent = tr("taskFailed"); });
   }
 
   function loadLeaderboard() {
-    return fetch(api("/api/tasks/leaderboard"))
+    return apiFetch(api("/api/tasks/leaderboard"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         var tally = {};
@@ -1708,6 +1822,40 @@
     }
   }
 
+  // "Bins are empty": two taps, since it closes the collection for everyone.
+  var skipArmTimer = null;
+  function resetSkipBtn() {
+    clearTimeout(skipArmTimer);
+    skipBtn.classList.remove("confirming");
+    skipBtn.textContent = tr("skipBtn");
+    skipBtn.disabled = false;
+  }
+  skipBtn.addEventListener("click", function () {
+    if (!currentTask || currentTask.out_at) return;
+    if (!skipBtn.classList.contains("confirming")) {
+      skipBtn.classList.add("confirming");
+      skipBtn.textContent = tr("skipConfirm");
+      skipArmTimer = setTimeout(resetSkipBtn, 5000);
+      return;
+    }
+    clearTimeout(skipArmTimer);
+    skipBtn.disabled = true;
+    skipBtn.textContent = tr("skipSending");
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/skip"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: outNameSelect.value || ME || "" })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
+        return r.json();
+      })
+      .then(function () {
+        return loadTaskHistory().then(loadTask);
+      })
+      .catch(function (e) { resetSkipBtn(); claimStatus.textContent = e.message || tr("skipFailed"); });
+  });
+
   outBtn.addEventListener("click", function () {
     if (!currentTask) return;
     outBtn.disabled = true;
@@ -1722,7 +1870,7 @@
     }
     // No content-type header — fetch sets the multipart boundary itself
     // from the FormData body; setting it manually breaks the upload.
-    fetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/out"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -1754,7 +1902,7 @@
       var backTaken = backPhoto.getTakenAt();
       if (backTaken) form.append("photoTakenAt", backTaken.toISOString());
     }
-    fetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
+    apiFetch(api("/api/tasks/" + currentTask.date_key + "/back"), { method: "POST", body: form })
       .then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
@@ -1811,7 +1959,7 @@
 
   // Who's subscribed (names only) — drives the dot on roster avatars.
   function loadSubscribers() {
-    fetch(api("/api/subscribe"))
+    apiFetch(api("/api/subscribe"))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (rows) {
         subscribedNames = {};
@@ -1834,7 +1982,7 @@
       subscribeForm.hidden = false;
       return;
     }
-    fetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
+    apiFetch(api("/api/subscribe/status/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (s) {
         subscribedState.hidden = !s.subscribed;
@@ -1852,7 +2000,7 @@
     if (!ME) { renderNotifyForm(); return; }
     notifySubscribeBtn.disabled = true;
     notifyStatus.textContent = tr("notifySubscribing");
-    fetch(api("/api/subscribe"), {
+    apiFetch(api("/api/subscribe"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1865,8 +2013,11 @@
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
         return r.json();
       })
-      .then(function () {
+      .then(function (data) {
+        // First email on an open name: this device is the one setting it up, so it stays signed in.
+        if (data && data.session) { setAuthToken(data.session); AUTH.session = ME; }
         notifyEmailInput.value = "";
+        if (data && data.subscribed) { notifyStatus.textContent = ""; loadMySubscription(); return; }
         notifyStatus.textContent = tr("notifyPending");
       })
       .catch(function (e) { notifyStatus.textContent = e.message || tr("notifyFailed"); })
@@ -1876,7 +2027,7 @@
   unsubBtn.addEventListener("click", function () {
     if (!ME) return;
     unsubBtn.disabled = true;
-    fetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
+    apiFetch(api("/api/subscribe/by-name/" + encodeURIComponent(ME)), { method: "DELETE" })
       .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
       .then(function () {
         notifyStatus.textContent = tr("unsubDone");
@@ -1916,19 +2067,59 @@
   // thread. New messages and late-loading pictures only pull the page down
   // while this holds, so scrolling up to read history is never yanked away.
   var chatStick = true;
-  function chatToBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
+  // On a phone the chat is the whole screen, so "the newest message" is the
+  // bottom of the page. On a wide screen it sits inline among the other
+  // sections, so scroll to the newest message itself, not the page's bottom.
+  function chatWide() { return window.matchMedia("(min-width: 900px)").matches; }
+  function chatToBottom() {
+    var last = chatThread.lastElementChild;
+    if (chatWide() && last && !last.classList.contains("chat-empty")) {
+      var composerH = document.getElementById("chatComposer").offsetHeight;
+      var edge = pageScroller.getBoundingClientRect().bottom - composerH - 12;
+      pageScroller.scrollTop += last.getBoundingClientRect().bottom - edge;
+      return;
+    }
+    pageScroller.scrollTop = pageScroller.scrollHeight;
+  }
+  // Is the newest message (about) in view — i.e. should new ones keep it pinned?
+  function chatAtBottom() {
+    var last = chatThread.lastElementChild;
+    if (chatWide() && last) return last.getBoundingClientRect().bottom <= pageScroller.getBoundingClientRect().bottom + 140;
+    return pageScroller.clientHeight + pageScroller.scrollTop >= pageScroller.scrollHeight - 140;
+  }
   // Layout keeps moving for a moment after a send (the textarea shrinks, a
   // keyboard animates, a picture decodes), so pin once now and again as it settles.
   function chatPinSoon() {
+    chatAnchor = null;
     chatStick = true;
     chatToBottom();
     requestAnimationFrame(chatToBottom);
     [150, 400].forEach(function (ms) { setTimeout(function () { if (chatStick) chatToBottom(); }, ms); });
   }
-  window.addEventListener("scroll", function () {
+  pageScroller.addEventListener("scroll", function () {
     if (chatSubview.offsetParent === null) return;
-    chatStick = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 140;
+    chatStick = chatAtBottom();
   }, { passive: true });
+
+  // On iPhones the on-screen keyboard doesn't shrink the page — iOS just pans it
+  // up, which hides the conversation while you type. Follow the visible area
+  // instead: while the keyboard is up, the app is exactly the space above it.
+  if (window.visualViewport) {
+    var vv = window.visualViewport;
+    var syncViewport = function () {
+      var open = vv.height < window.innerHeight - 100;
+      var root = document.documentElement;
+      if (open) {
+        root.style.setProperty("--app-h", vv.height + "px");
+        root.style.setProperty("--app-top", vv.offsetTop + "px");
+      }
+      var changed = document.body.classList.contains("kbd") !== open;
+      document.body.classList.toggle("kbd", open);
+      if ((changed || open) && chatStick && chatSubview.offsetParent !== null) chatToBottom();
+    };
+    vv.addEventListener("resize", syncViewport);
+    vv.addEventListener("scroll", syncViewport);
+  }
 
   function chatToken() {
     var key = houseKey("binDutyChatToken");
@@ -1945,7 +2136,7 @@
   function chatFetch(path, opts) {
     opts = opts || {};
     opts.headers = Object.assign({ "x-chat-token": chatToken() }, opts.headers || {});
-    return fetch(api(path), opts).then(function (r) {
+    return apiFetch(api(path), opts).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; }).then(function (e) { throw new Error(e.error || "failed"); });
       return r.json();
     });
@@ -1967,6 +2158,7 @@
     var reacts = document.createElement("div");
     reacts.className = "chat-reacts";
     m.reactions.forEach(function (r) {
+      if (!r.count) return; // unused reactions stay out of sight — press and hold to add one
       var b = document.createElement("button");
       b.type = "button";
       b.className = "chat-react" + (r.count ? " has" : "") + (r.mine ? " on" : "");
@@ -2025,7 +2217,7 @@
       var img = document.createElement("img");
       img.className = "chat-pic";
       img.alt = tr("chatPhoto");
-      img.addEventListener("load", function () { if (chatStick) chatToBottom(); });
+      img.addEventListener("load", function () { if (chatAnchor && chatHoldNow) chatHoldNow(); else if (chatStick) chatToBottom(); });
       img.src = api("/api/chat/photo/" + m.id);
       img.addEventListener("click", function () { chatLightboxImg.src = img.src; chatLightbox.hidden = false; });
       el.appendChild(img);
@@ -2054,14 +2246,131 @@
     }
     actions.appendChild(chatBuildReacts(m));
     el.appendChild(actions);
+    chatHoldToReact(el, m.id);
+    if (chatObserver) chatObserver.observe(el);
     return el;
   }
+
+  // ---- press and hold a message: reactions + actions over a dimmed screen ----
+  var chatReactLayer = document.getElementById("chatReactLayer");
+  var chatReactBar = document.getElementById("chatReactBar");
+  var chatReactMenu = document.getElementById("chatReactMenu");
+  var chatReactClone = null;
+  var CHAT_EMOJI = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}"];
+
+  function chatHoldToReact(el, id) {
+    var timer = null, sx = 0, sy = 0, opened = false;
+    function cancel() { clearTimeout(timer); timer = null; }
+    el.addEventListener("touchstart", function (e) {
+      opened = false;
+      if (e.touches.length !== 1 || e.target.closest("button")) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      timer = setTimeout(function () {
+        timer = null; opened = true;
+        if (navigator.vibrate) navigator.vibrate(12);
+        chatOpenReactMenu(id, el);
+      }, 420);
+    }, { passive: true });
+    el.addEventListener("touchmove", function (e) {
+      if (timer && Math.hypot(e.touches[0].clientX - sx, e.touches[0].clientY - sy) > 10) cancel();
+    }, { passive: true });
+    el.addEventListener("touchend", function (e) { cancel(); if (opened) e.preventDefault(); });
+    el.addEventListener("touchcancel", cancel);
+    // A computer: right-click (or the menu key). Android also sends this on a long press.
+    el.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      if (chatReactLayer.hidden) chatOpenReactMenu(id, el);
+    });
+  }
+
+  function chatCloseReactMenu() {
+    chatReactLayer.hidden = true;
+    if (chatReactClone) { chatReactClone.remove(); chatReactClone = null; }
+  }
+
+  function chatOpenReactMenu(id, el) {
+    var m = chatMessages.filter(function (x) { return x.id === id; })[0];
+    if (!m) return;
+    chatCloseReactMenu();
+    chatReactBar.textContent = "";
+    chatReactMenu.textContent = "";
+
+    var mineEmoji = null;
+    m.reactions.forEach(function (r) { if (r.mine) mineEmoji = r.emoji; });
+    CHAT_EMOJI.forEach(function (emoji) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = emoji;
+      b.setAttribute("aria-label", tr("chatReactLabel") + " " + emoji);
+      b.setAttribute("aria-pressed", emoji === mineEmoji ? "true" : "false");
+      if (emoji === mineEmoji) b.className = "on";
+      b.addEventListener("click", function () { chatCloseReactMenu(); chatReact(id, emoji); });
+      chatReactBar.appendChild(b);
+    });
+
+    function item(label, fn, danger) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.textContent = label;
+      if (danger) b.className = "danger";
+      b.addEventListener("click", function () { chatCloseReactMenu(); fn(); });
+      chatReactMenu.appendChild(b);
+    }
+    item(tr("chatReply"), function () { chatSetReply(m); });
+    if (m.body) item(tr("chatCopy"), function () {
+      var done = function () { chatStatus.textContent = tr("chatCopied"); setTimeout(function () { if (chatStatus.textContent === tr("chatCopied")) chatStatus.textContent = ""; }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(m.body).then(done).catch(function () {});
+    });
+    if (m.mine) item(tr("chatDelete"), function () {
+      chatFetch("/api/chat/messages/" + m.id, { method: "DELETE" }).then(chatRefresh).catch(function () {});
+    }, true);
+
+    // The message itself, lifted above the dimmed screen where it was.
+    var r = el.getBoundingClientRect();
+    chatReactClone = el.cloneNode(true);
+    chatReactClone.classList.remove("flash");
+    chatReactClone.classList.add("chat-react-clone");
+    chatReactClone.removeAttribute("data-id");
+    chatReactClone.style.width = r.width + "px";
+    chatReactClone.style.left = r.left + "px";
+    chatReactLayer.appendChild(chatReactClone);
+    chatReactLayer.hidden = false;
+
+    // Reactions above, actions below, everything kept on screen.
+    var vw = window.innerWidth, vh = window.innerHeight, gap = 8, edge = 12, topEdge = 52;
+    var barH = chatReactBar.offsetHeight, barW = chatReactBar.offsetWidth;
+    var menuH = chatReactMenu.offsetHeight, menuW = chatReactMenu.offsetWidth;
+    var h = Math.max(48, Math.min(r.height, vh - topEdge - edge - barH - menuH - gap * 2));
+    chatReactClone.style.maxHeight = h + "px";
+    var top = Math.min(Math.max(r.top, topEdge + barH + gap), vh - edge - menuH - gap - h);
+    chatReactClone.style.top = top + "px";
+    function across(w) {
+      var x = m.mine ? r.right - w : r.left; // line up with the message's own side
+      return Math.max(edge, Math.min(x, vw - edge - w)) + "px";
+    }
+    chatReactBar.style.top = (top - gap - barH) + "px";
+    chatReactBar.style.left = across(barW);
+    chatReactMenu.style.top = (top + h + gap) + "px";
+    chatReactMenu.style.left = across(menuW);
+    var first = chatReactBar.querySelector("button");
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  document.getElementById("chatReactBackdrop").addEventListener("click", chatCloseReactMenu);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !chatReactLayer.hidden) chatCloseReactMenu(); });
+  // Turning the phone moves everything; the keyboard closing (height only) doesn't.
+  var chatReactWidth = window.innerWidth;
+  window.addEventListener("resize", function () {
+    if (window.innerWidth !== chatReactWidth && !chatReactLayer.hidden) chatCloseReactMenu();
+    chatReactWidth = window.innerWidth;
+  });
 
   function chatRender() {
     var stick = chatStick;
     chatThread.textContent = "";
     if (!chatMessages.length) {
-      chatEls = {};
+      chatForgetAll();
       var empty = document.createElement("div");
       empty.className = "chat-empty";
       empty.textContent = tr("chatEmpty");
@@ -2070,6 +2379,7 @@
     }
     var live = {};
     var lastDay = "";
+    var dividerPlaced = false;
     chatMessages.forEach(function (m) {
       var day = dateKeyOf(new Date(m.createdAt));
       if (day !== lastDay) {
@@ -2079,8 +2389,16 @@
         sep.textContent = day === dateKeyOf(new Date()) ? tr("todayLabel") : fmtLong(new Date(m.createdAt));
         chatThread.appendChild(sep);
       }
+      if (!dividerPlaced && chatDividerAfter !== null && !m.mine && m.id > chatDividerAfter) {
+        dividerPlaced = true;
+        var mark = document.createElement("div");
+        mark.className = "chat-new";
+        mark.textContent = tr("chatNewMessages");
+        chatThread.appendChild(mark);
+      }
       var sig = chatMsgSig(m), rsig = chatReactSig(m), entry = chatEls[m.id];
       if (!entry || entry.sig !== sig) {
+        if (entry && chatObserver) chatObserver.unobserve(entry.el); // the old copy is about to be replaced
         entry = chatEls[m.id] = { el: chatBuildMsg(m), sig: sig, rsig: rsig };
       } else if (entry.rsig !== rsig) {
         var old = entry.el.querySelector(".chat-reacts");
@@ -2090,10 +2408,19 @@
       live[m.id] = true;
       chatThread.appendChild(entry.el);
     });
-    Object.keys(chatEls).forEach(function (id) { if (!live[id]) delete chatEls[id]; });
+    Object.keys(chatEls).forEach(function (id) {
+      if (live[id]) return;
+      if (chatObserver) chatObserver.unobserve(chatEls[id].el); // deleted or expired: stop watching it
+      delete chatEls[id];
+    });
     if (stick) chatToBottom();
   }
-  function chatRerender() { chatSignature = null; chatEls = {}; if (chatMe) chatRender(); }
+  // Drop every cached message (and stop watching them) — a full redraw.
+  function chatForgetAll() {
+    if (chatObserver) chatObserver.disconnect();
+    chatEls = {};
+  }
+  function chatRerender() { chatSignature = null; chatForgetAll(); if (chatMe) chatRender(); }
 
   function chatReact(id, emoji) {
     chatFetch("/api/chat/messages/" + id + "/reaction", {
@@ -2133,7 +2460,7 @@
       }).join(",");
       chatMessages = data.messages;
       if (sig !== chatSignature) { chatSignature = sig; chatRender(); }
-      chatMarkSeen();
+      chatUnreadEl.hidden = true; // the chat is open; what has been SEEN is tracked as messages scroll into view
       if (chatStatus.textContent === tr("chatLoadFailed")) chatStatus.textContent = "";
     }).catch(function () { chatStatus.textContent = tr("chatLoadFailed"); });
   }
@@ -2141,11 +2468,40 @@
   // Unread badge on the Home button: messages from other devices since this
   // one last had the chat open.
   function chatSeenKey() { return houseKey("binDutyChatSeen"); }
-  function chatMarkSeen() {
-    var top = chatMessages.length ? chatMessages[chatMessages.length - 1].id : 0;
-    try { localStorage.setItem(chatSeenKey(), String(top)); } catch (e) {}
-    chatUnreadEl.hidden = true;
+  // The newest message this device has actually had on screen — not merely
+  // downloaded. null = never opened the chat here (so it opens at the bottom).
+  function chatReadSeen() {
+    try {
+      var v = localStorage.getItem(chatSeenKey());
+      return v === null ? null : (parseInt(v, 10) || 0);
+    } catch (e) { return null; }
   }
+  var chatSeenId = chatReadSeen() || 0;
+  function chatNoteSeen(id) {
+    if (id <= chatSeenId) return;
+    chatSeenId = id;
+    try { localStorage.setItem(chatSeenKey(), String(id)); } catch (e) {}
+  }
+  // A message counts as seen once most of it is above the message box. Used
+  // for the "where you left off" position and the unread badge.
+  var chatObserver = ("IntersectionObserver" in window) ? new IntersectionObserver(function (entries) {
+    if (document.hidden || chatSubview.offsetParent === null) return;
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var id = parseInt(e.target.dataset.id, 10);
+      if (id) chatNoteSeen(id);
+    });
+  }, { root: pageScroller, threshold: 0.6, rootMargin: "0px 0px -90px 0px" }) : null;
+  // Observers only report changes, so after the page was hidden or the chat
+  // reopened, start watching again to catch what is already in view.
+  function chatReobserve() {
+    if (!chatObserver) return;
+    chatObserver.disconnect();
+    Object.keys(chatEls).forEach(function (id) { if (chatEls[id].el.isConnected) chatObserver.observe(chatEls[id].el); });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && chatSubview.offsetParent !== null) chatReobserve();
+  });
   function chatRefreshUnread() {
     var seen = 0;
     try { seen = parseInt(localStorage.getItem(chatSeenKey()), 10) || 0; } catch (e) {}
@@ -2155,17 +2511,47 @@
     }).catch(function () {});
   }
 
+  // Opening the chat puts you where you left off: the first message you
+  // haven't seen, under a "New messages" line — or the bottom if you're up to
+  // date (or have never opened the chat on this device).
+  var chatDividerAfter = null;   // id of the newest message already seen when the chat was opened
+  var chatAnchor = null;         // the "New messages" line, while it is still being held in place
+  ["touchstart", "wheel", "keydown", "mousedown"].forEach(function (t) {
+    pageScroller.addEventListener(t, function () { chatAnchor = null; }, { passive: true });
+  });
+  function chatLand() {
+    var marker = chatThread.querySelector(".chat-new");
+    if (!marker) { chatStick = true; chatToBottom(); chatReobserve(); return; }
+    chatStick = false;
+    chatAnchor = marker;
+    // Pictures above and below keep loading and shifting things; hold the line
+    // in place for a moment, until the reader moves it themselves.
+    var hold = function () {
+      if (chatAnchor !== marker) return;
+      pageScroller.scrollTop += marker.getBoundingClientRect().top - pageScroller.getBoundingClientRect().top - 56;
+    };
+    hold(); requestAnimationFrame(hold);
+    [150, 450, 1000].forEach(function (ms) { setTimeout(hold, ms); });
+    setTimeout(function () { if (chatAnchor === marker) chatAnchor = null; }, 1300);
+    chatHoldNow = hold;
+    chatReobserve();
+  }
+  var chatHoldNow = null;
+
   function chatOpened(quiet) {
     // quiet: wide screens show the chat inline with everything else, so it
     // loads in place without scrolling the page away from where you are.
+    chatDividerAfter = quiet ? null : chatReadSeen();
+    chatSignature = null; // redraw once so the line lands in the right place
     chatStick = !quiet;
-    chatRefresh().then(function () { if (!quiet) chatToBottom(); });
+    chatRefresh().then(function () { if (!quiet) chatLand(); else chatReobserve(); });
     if (!chatTimer) chatTimer = setInterval(function () {
       if (document.hidden || chatSubview.offsetParent === null) return;
       chatRefresh();
     }, 5000);
   }
   function chatClosed() {
+    chatDividerAfter = null; chatAnchor = null;
     if (chatTimer) { clearInterval(chatTimer); chatTimer = null; }
     if (chatMe) chatRefreshUnread();
   }
@@ -2352,7 +2738,7 @@
   function loadPushChat(sub) {
     setPushChat(false, false);
     if (!sub) return;
-    fetch(api("/api/push/chat?endpoint=" + encodeURIComponent(sub.endpoint)))
+    apiFetch(api("/api/push/chat?endpoint=" + encodeURIComponent(sub.endpoint)))
       .then(function (r) { return r.json(); })
       .then(function (d) { setPushChat(!!d.enabled, true); })
       .catch(function () { setPushChat(false, true); });
@@ -2408,7 +2794,7 @@
         if (!sub) return;
         var endpoint = sub.endpoint;
         return sub.unsubscribe().then(function () {
-          return fetch(api("/api/push/unsubscribe"), {
+          return apiFetch(api("/api/push/unsubscribe"), {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ endpoint: endpoint })
           });
@@ -2419,13 +2805,13 @@
   function pushSubscribe() {
     return Notification.requestPermission().then(function (perm) {
       if (perm !== "granted") return;
-      return fetch(api("/api/push/vapid-public-key"))
+      return apiFetch(api("/api/push/vapid-public-key"))
         .then(function (r) { if (!r.ok) throw new Error("no key"); return r.json(); })
         .then(function (data) { return swRegistration().then(function (reg) {
           return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(data.key) });
         }); })
         .then(function (sub) {
-          return fetch(api("/api/push/subscribe"), {
+          return apiFetch(api("/api/push/subscribe"), {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ subscription: sub.toJSON() })
           });
@@ -2454,14 +2840,41 @@
   // or quiz). An open chat is reopened after. ----
   var updateReady = false;
   var loadedVersion = null;
+  // Is something half-done on screen that a restart would throw away? Text
+  // typed in ANY visible field (a name, an email, a code, an amount, a
+  // message), an attached photo, or an open scan / quiz. (A focused but empty
+  // field has nothing to lose — and on iPhones the chat box stays focused.)
+  var typedText = function () {
+    var fields = document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=button]), textarea');
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i].offsetParent !== null && String(fields[i].value || "").trim()) return true;
+    }
+    return false;
+  };
   var workInProgress = function () {
-    return !!((chatInput && chatInput.value.trim()) || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
+    return !!(typedText() || chatPhotoBlob || outPhoto.getFile() || backPhoto.getFile() ||
       !scanSubview.hidden || !sortItSubview.hidden);
+  };
+  // Every self-started reload (an update, a new day, a pull-to-refresh) goes
+  // through here. If the chat is open — or a tapped notification has just asked
+  // for it and the page hasn't acted on that yet — the reloaded page is told to
+  // reopen it. Without this, waking up on a new day for a notification tap
+  // could reload before the tap's "open the chat" note was used, and land on Home.
+  var reloadApp = function () {
+    var go = function () {
+      try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
+      location.reload();
+    };
+    readOpenIntent().then(function (d) {
+      var wantsChat = false;
+      try { wantsChat = !!(d && intentHouse(d) === HOUSE_SLUG && new URL(d.url).searchParams.get("chat") === "1"); } catch (e) {}
+      if (wantsChat) { try { sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {} }
+      go();
+    }, go);
   };
   var reloadIfReady = function () {
     if (!updateReady || workInProgress()) return;
-    try { if (!chatSubview.hidden) sessionStorage.setItem("binDutyResumeChat", "1"); } catch (e) {}
-    location.reload();
+    reloadApp();
   };
   var fetchVersion = function () {
     return fetch("/version", { cache: "no-store" })
@@ -2478,7 +2891,111 @@
       if (document.hidden) reloadIfReady();
     });
   }
+  // A new day. Today's date, "tonight", whose week it is and the open task
+  // were all worked out when the app started, and an installed app can stay
+  // open in the background for days — so when the date has moved on, start
+  // fresh (on coming back to the screen, or within a minute if it's open at
+  // midnight), never in the middle of a message, photo or scan.
+  var loadedDay = dateKeyOf(new Date());
+  var reloadForNewDay = function () {
+    if (dateKeyOf(new Date()) === loadedDay || workInProgress()) return false;
+    reloadApp();
+    return true;
+  };
+  setInterval(reloadForNewDay, 60 * 1000);
+  window.addEventListener("pageshow", function (e) { if (e.persisted) reloadForNewDay(); });
+  window.addEventListener("focus", reloadForNewDay);
+
+  // ---- pull down to refresh. An installed iPhone app gets no browser
+  // refresh, and the page scrolls inside #scroller, so the gesture is done
+  // here: pull from the very top past the threshold and let go. ----
+  function refreshEverything() {
+    // A new day or a new version of the app: start completely fresh.
+    if (dateKeyOf(new Date()) !== loadedDay && reloadForNewDay()) return new Promise(function () {});
+    return fetchVersion().then(function (v) {
+      if (v && loadedVersion && v !== loadedVersion && !workInProgress()) {
+        reloadApp();
+        return new Promise(function () {});
+      }
+      var quiet = function (p) { return Promise.resolve(p).catch(function () {}); };
+      return Promise.all([
+        apiFetch(api("/api/roster")).then(function (r) { return r.ok ? r.json() : null; }).then(function (roster) {
+          // Someone joined or left: the rotation changes, so redo everything that depends on it.
+          if (roster && roster.length && roster.join("|") !== ROSTER.join("|")) afterRosterChange(roster);
+        }),
+        loadTaskHistory().then(loadTask),
+        loadLeaderboard(), loadRosterFull(), loadSubscribers(), loadAchievements(), loadReactions(), loadMySubscription(),
+        chatSubview.hidden ? chatRefreshUnread() : chatRefresh()
+      ].map(quiet));
+    });
+  }
+
+  (function pullToRefresh() {
+    var ptr = document.getElementById("ptr");
+    var content = document.getElementById("app");
+    var THRESHOLD = 70, MAX = 110, HOLD = 52;
+    var startX = 0, startY = null, pull = 0, busy = false, decided = false;
+
+    function setPull(px, animate) {
+      pull = px;
+      var tr = animate ? "transform 0.25s ease, opacity 0.25s ease" : "none";
+      content.style.transition = tr;
+      ptr.style.transition = tr;
+      content.style.transform = px ? "translateY(" + px + "px)" : "";
+      ptr.style.opacity = String(Math.min(1, px / THRESHOLD));
+      ptr.style.transform = "translate(-50%, " + (px - 50) + "px) rotate(" + Math.round(px * 3) + "deg)";
+      ptr.classList.toggle("armed", px >= THRESHOLD);
+    }
+    function ignored(target) {
+      return !!(target.closest && target.closest(".select-popup, .chat-lightbox, #taskPhotoModal, textarea, input"));
+    }
+
+    pageScroller.addEventListener("touchstart", function (e) {
+      startY = null;
+      if (busy || e.touches.length !== 1 || pageScroller.scrollTop > 0 || ignored(e.target)) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      decided = false;
+    }, { passive: true });
+
+    pageScroller.addEventListener("touchmove", function (e) {
+      if (startY === null) return;
+      var dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
+      if (!decided) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        decided = true;
+        // A sideways swipe (the week strip, a wide table) or scrolling up isn't a pull.
+        if (Math.abs(dx) > Math.abs(dy) || dy < 0) { startY = null; return; }
+      }
+      if (dy <= 0 || pageScroller.scrollTop > 0) { if (pull) setPull(0); return; }
+      e.preventDefault(); // the pull replaces the rubber-band bounce
+      setPull(Math.min(MAX, dy * 0.5));
+    }, { passive: false });
+
+    function release() {
+      if (startY === null) return;
+      startY = null;
+      if (pull < THRESHOLD) { setPull(0, true); return; }
+      busy = true;
+      setPull(HOLD, true);
+      ptr.style.opacity = "1";
+      ptr.classList.add("spinning");
+      var started = Date.now();
+      refreshEverything().then(function () {
+        // Long enough to see that something happened, even on a fast network.
+        return new Promise(function (r) { setTimeout(r, Math.max(0, 500 - (Date.now() - started))); });
+      }).then(function () {
+        ptr.classList.remove("spinning");
+        setPull(0, true);
+        busy = false;
+      });
+    }
+    pageScroller.addEventListener("touchend", release);
+    pageScroller.addEventListener("touchcancel", release);
+  })();
+
   document.addEventListener("visibilitychange", function () {
+    if (reloadForNewDay()) return;
     if (document.hidden) { reloadIfReady(); return; }
     fetchVersion().then(function (v) {
       if (!v) return;
@@ -2764,12 +3281,14 @@
   // name picked it's the whole screen; once picked, the screen matches the
   // mockup (head, stats, language, reminders) and an "Edit" link opens it.
   var profileEdit = document.getElementById("profileEdit");
+  var meSignOut = document.getElementById("meSignOut");
   var profileEditBtn = document.getElementById("profileEditBtn");
   var profileEditOpen = false;
 
   function renderProfileEdit() {
     profileEdit.hidden = !!ME && !profileEditOpen;
     profileEditBtn.hidden = !ME;
+    meSignOut.hidden = !ME;
     profileEditBtn.textContent = tr(profileEditOpen ? "profileDoneBtn" : "profileEditBtn");
   }
   profileEditBtn.addEventListener("click", function () {
@@ -2800,8 +3319,9 @@
     statStreak.textContent = gBestVal;
   }
 
-  meSelect.addEventListener("change", function () {
-    setMe(meSelect.value);
+  // Everything that depends on who "me" is, redrawn after it changes.
+  function commitMe(name) {
+    setMe(name);
     profileEditOpen = false; // picking a name collapses the panel
     meStatus.textContent = ME ? "" : tr("meNotPicked");
     renderProfileHead();
@@ -2812,6 +3332,126 @@
     renderTask(currentTask);
     renderNotifyForm();
     loadMySubscription();
+  }
+
+  // ---- the emailed-code step for protected names ----
+  var meAuth = document.getElementById("meAuth");
+  var meAuthMsg = document.getElementById("meAuthMsg");
+  var meAuthSend = document.getElementById("meAuthSend");
+  var meAuthCancel = document.getElementById("meAuthCancel");
+  var meAuthCodeRow = document.getElementById("meAuthCodeRow");
+  var meAuthCode = document.getElementById("meAuthCode");
+  var meAuthVerify = document.getElementById("meAuthVerify");
+  var pendingName = "";
+
+  function closeAuthPanel() {
+    pendingName = "";
+    meAuth.hidden = true;
+    meAuthCodeRow.hidden = true;
+    meAuthCode.value = "";
+  }
+  function openAuthPanel(name) {
+    pendingName = name;
+    meSelect.value = name;
+    syncSelectTrigger(meSelect);
+    meAuth.hidden = false;
+    meAuthCodeRow.hidden = true;
+    meAuthCode.value = "";
+    meAuthSend.disabled = false;
+    meAuthMsg.textContent = tr("authProtected");
+  }
+  function postAuth(path, body) {
+    return apiFetch(api(path), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    });
+  }
+  function dropSession() {
+    if (getAuthToken()) postAuth("/api/auth/logout").catch(function () {});
+    setAuthToken("");
+    AUTH.session = null;
+  }
+
+  meSelect.addEventListener("change", function () {
+    var picked = meSelect.value;
+    if (picked && picked !== ME && isLockedName(picked)) {
+      openAuthPanel(picked); // not "me" until the code is entered
+      return;
+    }
+    closeAuthPanel();
+    // A device is one person at a time: moving to another name ends the old session.
+    if (picked !== AUTH.session) dropSession();
+    commitMe(picked);
+  });
+
+  meAuthCancel.addEventListener("click", function () {
+    closeAuthPanel();
+    renderMeSelect(); // put the picker back on whoever is signed in
+  });
+
+  meAuthSend.addEventListener("click", function () {
+    if (!pendingName) return;
+    meAuthSend.disabled = true;
+    meAuthMsg.textContent = tr("authSending");
+    postAuth("/api/auth/request", { name: pendingName })
+      .then(function (res) {
+        if (res.ok) {
+          meAuthMsg.textContent = fmt("authSent", { email: res.data.email || "" });
+        } else if (res.data && res.data.code === "AUTH_COOLDOWN") {
+          meAuthMsg.textContent = tr("authCooldown");
+        } else if (res.data && res.data.code === "AUTH_LOCKED") {
+          meAuthMsg.textContent = tr("authWait");
+          return;
+        } else {
+          meAuthMsg.textContent = (res.data && res.data.error) || tr("authFailed");
+          return;
+        }
+        meAuthCodeRow.hidden = false;
+        meAuthCode.focus();
+      })
+      .catch(function () { meAuthMsg.textContent = tr("authFailed"); })
+      .finally(function () { meAuthSend.disabled = false; meAuthSend.textContent = tr("authSend"); });
+  });
+
+  function verifyCode() {
+    var code = meAuthCode.value.replace(/\D/g, "");
+    if (!pendingName || code.length !== 6) return;
+    var name = pendingName;
+    meAuthVerify.disabled = true;
+    meAuthMsg.textContent = tr("authVerifying");
+    postAuth("/api/auth/verify", { name: name, code: code })
+      .then(function (res) {
+        if (res.ok && res.data.token) {
+          setAuthToken(res.data.token);
+          AUTH.session = name;
+          closeAuthPanel();
+          commitMe(name);
+          return;
+        }
+        var c = res.data && res.data.code;
+        meAuthCode.value = "";
+        if (c === "AUTH_WRONG") meAuthMsg.textContent = fmt("authWrong", { n: res.data.left });
+        else if (c === "AUTH_LOCKED") meAuthMsg.textContent = tr("authWait");
+        else meAuthMsg.textContent = tr("authExpired");
+      })
+      .catch(function () { meAuthMsg.textContent = tr("authFailed"); })
+      .finally(function () { meAuthVerify.disabled = false; });
+  }
+  meAuthVerify.addEventListener("click", verifyCode);
+  meAuthCode.addEventListener("input", function () {
+    meAuthCode.value = meAuthCode.value.replace(/\D/g, "").slice(0, 6);
+    if (meAuthCode.value.length === 6) verifyCode();
+  });
+
+  // "Out": forgets who this device is. A protected name needs a new code to come back.
+  meSignOut.addEventListener("click", function () {
+    dropSession();
+    closeAuthPanel();
+    commitMe("");
+    renderMeSelect();
   });
 
   // ---- achievements ----
@@ -2847,7 +3487,7 @@
       return;
     }
     achvUnlockedMsg.textContent = "";
-    fetch(api("/api/coins/" + encodeURIComponent(ME)))
+    apiFetch(api("/api/coins/" + encodeURIComponent(ME)))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         renderAchievements(data.achievements);
@@ -2944,7 +3584,7 @@
     }
     donateBtn.disabled = true;
     donateStatus.textContent = tr("donateSending");
-    fetch(api("/api/coins/donate"), {
+    apiFetch(api("/api/coins/donate"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from: ME, to: donateToSelect.value, amount: amount })
@@ -2991,7 +3631,7 @@
     // No live task → the row is hidden, nothing to fetch (renderTask calls
     // this again once a task is shown).
     if (!currentTask) return;
-    fetch(api("/api/reactions/" + reactionDateKey()))
+    apiFetch(api("/api/reactions/" + reactionDateKey()))
       .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
       .then(function (data) {
         var mine = null;
@@ -3013,7 +3653,7 @@
   Object.keys(reactButtons).forEach(function (emoji) {
     reactButtons[emoji].addEventListener("click", function () {
       if (!ME) return;
-      fetch(api("/api/reactions/" + reactionDateKey()), {
+      apiFetch(api("/api/reactions/" + reactionDateKey()), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: ME, emoji: emoji })
@@ -3037,6 +3677,7 @@
     var titleEl = document.getElementById("scanTitle");
 
     function showPhoto(url) {
+      if (thumbEl.src && thumbEl.src.indexOf("blob:") === 0 && thumbEl.src !== url) URL.revokeObjectURL(thumbEl.src);
       thumbEl.src = url;
       thumbEl.hidden = false;
       idleEl.hidden = true;
@@ -3045,6 +3686,7 @@
       resultEl.hidden = true;
       resultEl.innerHTML = "";
       thumbEl.hidden = true;
+      if (thumbEl.src && thumbEl.src.indexOf("blob:") === 0) URL.revokeObjectURL(thumbEl.src);
       thumbEl.removeAttribute("src");
       idleEl.hidden = false;
       titleEl.textContent = tr("scanScreenTitle");
@@ -3138,10 +3780,10 @@
         if (!addr) return;
         emailBtn.disabled = true;
         emailStatus.textContent = tr("scanEmailSending");
-        fetch(api("/api/check/email"), {
+        apiFetch(api("/api/check/email"), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why })
+          body: JSON.stringify({ email: addr, lang: currentLang, item: data.item, code: data.code, why: data.why, sig: data.sig })
         })
           .then(function (r) {
             if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || "failed"); });
@@ -3179,7 +3821,7 @@
       formData.append("photo", file);
       if (ME) formData.append("name", ME);
 
-      fetch(api("/api/check"), { method: "POST", body: formData })
+      apiFetch(api("/api/check"), { method: "POST", body: formData })
         .then(function (r) {
           if (r.status === 413) throw { code: "TOO_LARGE" };
           if (!r.ok) {
@@ -3213,14 +3855,18 @@
   function startApp() {
     var scheduleLoadFailed = false;
     Promise.all([
-      fetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
-      fetch(api("/api/schedule"))
+      apiFetch(api("/api/roster")).then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); }),
+      apiFetch(api("/api/schedule"))
         .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
-        .catch(function () { scheduleLoadFailed = true; return {}; })
+        .catch(function () { scheduleLoadFailed = true; return {}; }),
+      apiFetch(api("/api/auth/state"))
+        .then(function (r) { if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .catch(function () { return null; })
     ])
       .then(function (results) {
         ROSTER = results[0] && results[0].length ? results[0] : ["Housemate"];
         SCHEDULE = results[1];
+        enforceSession(results[2]);
         recomputeWeek();
         if (scheduleLoadFailed) rosterMsg.textContent = "Couldn't load the collection calendar from the server.";
         applyLang();

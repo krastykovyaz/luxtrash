@@ -1,6 +1,7 @@
 const { t, binLabel } = require("./i18n");
 const { codesFor, mondayOf, personForWeek } = require("./rotation");
 const { wrapEmail, binBadges, escapeHtml, COLORS } = require("./emailTemplate");
+const secret = require("./secret");
 
 let transporter = null;
 let warnedMissingConfig = false;
@@ -24,7 +25,9 @@ function fromHeader() {
 function unsubscribeHeaders(email, houseSlug) {
   // ?h= is required now — there's no implicit default house for a bare
   // unsubscribe link to fall back to.
-  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}?h=${encodeURIComponent(houseSlug)}`;
+  // Signed: the address alone isn't enough to unsubscribe someone.
+  const sig = secret.sign(`unsub|${houseSlug}|${email.toLowerCase()}`);
+  const url = `${PUBLIC_URL}/api/subscribe/unsubscribe/${encodeURIComponent(email)}?h=${encodeURIComponent(houseSlug)}&s=${sig}`;
   return {
     "List-Unsubscribe": `<mailto:${process.env.SMTP_USER}?subject=unsubscribe>, <${url}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
@@ -105,6 +108,29 @@ async function sendConfirmationEmail(email, lang, name, confirmUrl, houseSlug) {
     text: `${bodyText}\n\n${confirmUrl}`,
     html,
     headers: unsubscribeHeaders(email, houseSlug)
+  });
+}
+
+// The one-time sign-in code for a protected name. A transactional message, so
+// no unsubscribe headers — it only ever goes out because someone just asked.
+async function sendLoginCodeEmail(email, lang, name, code) {
+  const transport = getTransporter();
+  if (!transport) {
+    const err = new Error("Email isn't configured on the server.");
+    err.code = "NO_SMTP";
+    throw err;
+  }
+  const bodyText = t(lang, "loginCodeBody").replace("{name}", name);
+  const html = wrapEmail(`
+    <p style="margin:0 0 20px;">${escapeHtml(bodyText)}</p>
+    <p style="margin:0;font-family:'Courier New',monospace;font-size:34px;font-weight:700;letter-spacing:8px;color:${COLORS.accent};">${escapeHtml(code)}</p>
+  `);
+  await transport.sendMail({
+    from: fromHeader(),
+    to: email,
+    subject: t(lang, "loginCodeSubject"),
+    text: `${bodyText}\n\n${code}`,
+    html
   });
 }
 
@@ -272,5 +298,5 @@ module.exports = {
   sendDailyReminders, buildTomorrowMessage,
   sendOutFollowUp, buildOutFollowUpMessage,
   sendWeekAheadNotices, buildWeekAheadMessage,
-  getTransporter, sendCheckResult, sendConfirmationEmail
+  getTransporter, sendCheckResult, sendConfirmationEmail, sendLoginCodeEmail
 };
